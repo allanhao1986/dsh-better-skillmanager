@@ -1,3 +1,6 @@
+[![release](https://img.shields.io/github/v/release/allanhao1986/dsh-better-skillmanager?label=release)](https://github.com/allanhao1986/dsh-better-skillmanager/releases)
+[![licence](https://img.shields.io/github/license/allanhao1986/dsh-better-skillmanager)](./LICENSE)
+
 # dsh-better-skillmanager
 
 A local DSH bundle that puts a **Skills** entry in the left rail and opens a
@@ -12,6 +15,29 @@ panel page      ->  main               key = skills
 | --- | --- |
 | 浏览技能 | A storefront over `api.skillhub.cn`: search, 13 categories, sorting, card grid, detail preview, one-click install. This is the tab the panel opens on. |
 | 技能管理 | Every skill this process can see, each matched to its official market name; SKILL.md preview, icons, uninstall. |
+
+## Install
+
+Requires the DSH desktop profile (the panel is a Web client half). Install and
+uninstall inside the panel are delegated to
+[`@montersy123/dsh-skill-market`](https://github.com/polang233/dsh-plugin-index),
+so that plugin must be present for those two actions; browsing, previews and
+everything else work without it.
+
+```bash
+# recommended: the packed release asset, nothing else needed
+dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.0.0/dsh-better-skillmanager-1.0.0.tgz
+
+# straight from the repository (needs git on the machine; pins the tag)
+dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.0.0
+
+# local checkout, for development
+dsh plugin --profile desktop add C:\path\to\dsh-better-skillmanager
+```
+
+Restart DSH (or reload the page) and a **技能 / Skills** icon appears in the left
+rail. The host half is loaded at apply time: after editing `index.js` toggle the
+bundle off and on, while `client.js` changes only need a page refresh.
 
 ## Panel chrome
 
@@ -207,19 +233,28 @@ Beishan.
 
 ## Publishing
 
+Distribution is GitHub-only - no npm account is involved:
+
 ```bash
-npm login                      # once, on the machine that publishes
-npm pack --dry-run             # inspect the tarball contents first
-npm publish                    # publishes dsh-better-skillmanager on npmjs
+npm pack                      # produces dsh-better-skillmanager-<version>.tgz
 ```
+
+Upload that tarball as a GitHub **release asset** (tag `v<version>`) and point
+the index entry at the repository. Installing from a release asset ships exactly
+the files in `files`; installing from git pulls the whole repository, so keep
+the repo free of build output and workspaces.
 
 The package is a standard DSH bundle: `dsh.manifestVersion: 1`,
 `dsh.bundle.patch` pointing at `cordis.patch.yml`, and a client half declared
 under `dsh.client`. `publishConfig.access` is `public`, `private` is unset, and
 `files` ships exactly the runtime pieces plus `README.md`, `LICENSE` and
-`icon.svg` — no workspace leftovers. Marketplace indexes (for example
-`https://dshopen.org/index.json`) read npm, so a published version appears there
-without extra work; add a `repository` field if you want star/trending labels.
+`icon.svg` - no workspace leftovers.
+
+Listing in the community index (`https://dshopen.org`) is a GitHub issue on
+[`polang233/dsh-plugin-index`](https://github.com/polang233/dsh-plugin-index)
+using its *plugin-add* template: plugin link, one-line summary, optional logo.
+Its stated requirement is public source, an installable version and a clear
+licence; a fixed git tag is accepted on request, which is what this project uses.
 
 ## Notes
 
