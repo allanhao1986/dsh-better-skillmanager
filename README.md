@@ -18,11 +18,18 @@ panel page      ->  main               key = skills
 
 ## Install
 
-Requires the DSH desktop profile (the panel is a Web client half). Install and
-uninstall inside the panel are delegated to
-[`@montersy123/dsh-skill-market`](https://github.com/polang233/dsh-plugin-index),
-so that plugin must be present for those two actions; browsing, previews and
-everything else work without it.
+Requires the DSH desktop profile (the panel is a Web client half). Installing and
+uninstalling inside the panel work on their own: the host half downloads the
+published file bundle from skillhub (`/api/v1/skills/<slug>/files` then one
+`/file` request per entry, sha256 verified, staged in a sibling directory and
+swapped in with a rename) and deletes the tree after the same validation the
+other routes use.
+
+If [`@montersy123/dsh-skill-market`](https://github.com/polang233/dsh-plugin-index)
+happens to be installed, both actions are delegated to it instead, because that
+bundle also owns the disabled-skills store and version records. It is optional:
+its absence is detected by probing `/skill-market/api/state` once a minute, and
+the panel falls back to the native path rather than failing.
 
 ```bash
 # recommended: the packed release asset, nothing else needed
@@ -225,7 +232,8 @@ read and removed from the panel like any other.
    (`MiniMax H3视频提示词 h3-prompt-writing`) has it stripped.
 4. Built-in skills (`source: bundled`) are not matched: the market also hosts
    unrelated skills under the same slug, so a match would be misleading.
-5. Any failure leaves the panel fully usable with local names and a footer note.
+5. Any failure leaves the panel fully usable with local names, plus a one-line
+   warning that replaces the (normally empty) footer.
 
 ## Author
 
