@@ -27,7 +27,8 @@
  * locally declared name.
  */
 
-import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -66,6 +67,10 @@ const CATEGORIES_TIMEOUT = 8000;
 const PREVIEW_TTL = 10 * 60 * 1000;
 const PREVIEW_CACHE_LIMIT = 60;
 const INSTALL_TIMEOUT = 120000;
+/** Native install: how many files to fetch at once, and the caps that bound it. */
+const INSTALL_CONCURRENCY = 4;
+const MAX_INSTALL_FILES = 2000;
+const MAX_INSTALL_BYTES = 4 * 1024 * 1024;
 const MARKET_UA = 'dsh-better-skillmanager/1.0 (+https://skillhub.cn)';
 const SORT_KEYS = ['score', 'downloads', 'stars', 'updated_at'];
 
@@ -300,6 +305,165 @@ async function fetchIcon(slug) {
  * skills root, built-in skills are refused, and the name the panel displayed
  * must still be the one on disk.
  */
+/* ------------------------------------------------------------------ */
+/* install / uninstall: native path when the market bundle is absent    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Whether `@montersy123/dsh-skill-market` is answering right now.
+ *
+ * That bundle owns the install layout and re-publishes the registry after a
+ * change, so it is preferred whenever it is there. It is optional though: once
+ * it is uninstalled its routes fall through to the web server's fallback and a
+ * POST to them answers 405, which used to surface as "技能市场返回 HTTP 405".
+ * Probing once a minute keeps the two paths honest without a round trip per click.
+ */
+let marketProbe = { at: 0, ok: false };
+
+async function marketReady(ctx, req) {
+  if (Date.now() - marketProbe.at < 60 * 1000) return marketProbe.ok;
+  let ok = false;
+  try {
+    const response = await fetch(`${selfOrigin(ctx, req)}${MARKET_ROUTE}/state`, {
+      headers: { accept: 'application/json' },
+      signal: timeoutSignal(2500),
+    });
+    ok = response.ok;
+  } catch {
+    ok = false;
+  }
+  marketProbe = { at: Date.now(), ok };
+  return ok;
+}
+
+/** One path segment of an install directory, mirroring the market's layout. */
+function installSegment(value, fallback) {
+  const cleaned = String(value || '')
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '');
+  return (cleaned || fallback).slice(0, 64);
+}
+
+/**
+ * Validate one upstream file path. Upstream paths are attacker controlled, so
+ * absolute paths, drive letters, backslashes and `..` are all rejected; the
+ * caller joins the returned value under the skill's own directory.
+ */
+function safeRelativePath(raw) {
+  const value = String(raw ?? '');
+  if (!value || value.length > 400) return null;
+  if (value.startsWith('/') || value.startsWith('\\') || /^[A-Za-z]:/.test(value)) return null;
+  if (value.includes('\\') || value.includes('\0')) return null;
+  const parts = value.split('/').filter((segment) => segment !== '' && segment !== '.');
+  if (parts.length === 0 || parts.some((segment) => segment === '..')) return null;
+  return parts.join('/');
+}
+
+/**
+ * Download a published skill's file bundle straight from the market.
+ *
+ * Two endpoints, both public: `…/files` lists the release (path, size, sha256)
+ * and `…/file` returns one file's bytes. Files are staged in a sibling
+ * directory and the swap is a rename, so an interrupted download can never
+ * leave a half-written skill in place.
+ */
+async function nativeInstall(ctx, { slug, namespace, version }) {
+  const handle = installSegment(namespace.replace(/^@/, ''), 'skillhub');
+  const directory = `${handle}--${installSegment(slug, 'skill')}`.slice(0, 128);
+  const root = SKILLS_ROOT;
+  const target = join(root, directory);
+  const stamp = Date.now();
+  const staging = join(root, `.staging-${directory}-${stamp}`);
+
+  const query = new URLSearchParams({ namespace });
+  if (version) query.set('version', version);
+  const listUrl = `${MARKET_BASE}/api/v1/skills/${encodeURIComponent(slug)}/files?${query.toString()}`;
+  const listing = await fetch(listUrl, {
+    headers: { 'user-agent': MARKET_UA, accept: 'application/json' },
+    signal: timeoutSignal(INSTALL_TIMEOUT),
+  }).then((response) => {
+    if (!response.ok) throw new Error(`技能市场返回 HTTP ${response.status}`);
+    return response.json();
+  });
+
+  const released = text(listing && listing.version) || text(version);
+  const list = Array.isArray(listing && listing.files) ? listing.files : [];
+  if (list.length === 0) throw new Error('该技能没有可下载的文件');
+  if (list.length > MAX_INSTALL_FILES) throw new Error(`文件数超出上限（${list.length}）`);
+
+  const files = [];
+  for (const entry of list) {
+    const path = safeRelativePath(entry && entry.path);
+    if (!path) throw new Error(`文件路径不合法：${String(entry && entry.path).slice(0, 80)}`);
+    const size = Number(entry && entry.size) || 0;
+    if (size > MAX_INSTALL_BYTES) throw new Error(`文件过大：${path}`);
+    files.push({ path, size, sha256: text(entry && entry.sha256) });
+  }
+  if (!files.some((file) => file.path === 'SKILL.md')) throw new Error('技能缺少 SKILL.md');
+
+  mkdirSync(staging, { recursive: true });
+  let written = 0;
+  let bytes = 0;
+  try {
+    let cursor = 0;
+    const worker = async () => {
+      for (;;) {
+        const index = cursor;
+        cursor += 1;
+        if (index >= files.length) return;
+        const file = files[index];
+        const fileQuery = new URLSearchParams({ path: file.path, namespace });
+        if (released) fileQuery.set('version', released);
+        const url = `${MARKET_BASE}/api/v1/skills/${encodeURIComponent(slug)}/file?${fileQuery.toString()}`;
+        const response = await fetch(url, {
+          headers: { 'user-agent': MARKET_UA },
+          signal: timeoutSignal(INSTALL_TIMEOUT),
+        });
+        if (!response.ok) throw new Error(`下载 ${file.path} 失败：HTTP ${response.status}`);
+        const buffer = Buffer.from(await response.arrayBuffer());
+        if (buffer.length > MAX_INSTALL_BYTES) throw new Error(`文件过大：${file.path}`);
+        if (file.sha256) {
+          const digest = createHash('sha256').update(buffer).digest('hex');
+          if (digest !== file.sha256) throw new Error(`校验失败：${file.path}`);
+        }
+        const destination = join(staging, ...file.path.split('/'));
+        mkdirSync(dirname(destination), { recursive: true });
+        writeFileSync(destination, buffer);
+        written += 1;
+        bytes += buffer.length;
+      }
+    };
+    const width = Math.min(INSTALL_CONCURRENCY, files.length);
+    await Promise.all(Array.from({ length: width }, worker));
+
+    // Swap: move any previous copy aside first so a failure cannot leave the
+    // skill directory empty.
+    let replaced = '';
+    if (existsSync(target)) {
+      replaced = `${target}.replaced-${stamp}`;
+      renameSync(target, replaced);
+    }
+    try {
+      renameSync(staging, target);
+    } catch (error) {
+      if (replaced) renameSync(replaced, target);
+      throw error;
+    }
+    if (replaced) rmSync(replaced, { recursive: true, force: true, maxRetries: 3, retryDelay: 120 });
+  } catch (error) {
+    rmSync(staging, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 });
+    throw error;
+  }
+
+  return { directory, name: directory, version: released, files: written, bytes };
+}
+
+/** Remove one skill directory, refusing anything that escapes the skills root. */
+function nativeUninstall(target) {
+  rmSync(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 120 });
+}
+
 async function sendUninstall(ctx, req, res) {
   const contentType = String(req.headers['content-type'] || '').toLowerCase();
   if (contentType.indexOf('application/json') < 0) {
@@ -393,36 +557,53 @@ async function sendUninstall(ctx, req, res) {
   }
 
   const origin = selfOrigin(ctx, req);
-  let status = 0;
-  let body = null;
-  try {
-    const response = await fetchFn(`${origin}${MARKET_ROUTE}/uninstall`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({ name: directory }),
-      signal: timeoutSignal(UNINSTALL_TIMEOUT),
-    });
-    status = response.status;
+  let marketUninstall = null;
+  if (await marketReady(ctx, req)) {
+    let status = 0;
+    let body = null;
     try {
-      body = await response.json();
-    } catch {
-      body = null;
-    }
-    if (!response.ok || !body || body.ok !== true) {
-      sendJson(res, status || 502, {
+      const response = await fetchFn(`${origin}${MARKET_ROUTE}/uninstall`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ name: directory }),
+        signal: timeoutSignal(UNINSTALL_TIMEOUT),
+      });
+      status = response.status;
+      try {
+        body = await response.json();
+      } catch {
+        body = null;
+      }
+      if (!response.ok || !body || body.ok !== true) {
+        sendJson(res, status || 502, {
+          ok: false,
+          error: 'market-uninstall-failed',
+          message: text(body && (body.message || body.error)) || `技能市场返回 HTTP ${status}`,
+        });
+        return;
+      }
+      marketUninstall = (body && body.uninstall) || null;
+    } catch (error) {
+      sendJson(res, 502, {
         ok: false,
-        error: 'market-uninstall-failed',
-        message: text(body && (body.message || body.error)) || `技能市场返回 HTTP ${status}`,
+        error: 'market-unreachable',
+        message: messageOf(error),
       });
       return;
     }
-  } catch (error) {
-    sendJson(res, 502, {
-      ok: false,
-      error: 'market-unreachable',
-      message: messageOf(error),
-    });
-    return;
+  } else {
+    // No market bundle: delete the tree ourselves. Every guard above has already
+    // run, so `target` is a validated directory inside a known skills root.
+    try {
+      nativeUninstall(target);
+    } catch (error) {
+      sendJson(res, 500, {
+        ok: false,
+        error: 'uninstall-failed',
+        message: messageOf(error),
+      });
+      return;
+    }
   }
 
   // Read the tree back instead of trusting the reply: a directory that is still
@@ -441,7 +622,7 @@ async function sendUninstall(ctx, req, res) {
     dir: target,
     leftover,
     stillRegistered: leftover ? false : stillRegistered,
-    market: (body && body.uninstall) || null,
+    market: marketUninstall,
   });
 }
 
@@ -868,30 +1049,57 @@ async function sendInstall(ctx, req, res) {
 
   let body = null;
   let status = 0;
-  try {
-    const response = await fetchFn(`${selfOrigin(ctx, req)}${MARKET_ROUTE}/install`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({ slug, namespace }),
-      signal: timeoutSignal(INSTALL_TIMEOUT),
-    });
-    status = response.status;
+  if (await marketReady(ctx, req)) {
     try {
-      body = await response.json();
-    } catch {
-      body = null;
+      const response = await fetchFn(`${selfOrigin(ctx, req)}${MARKET_ROUTE}/install`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ slug, namespace }),
+        signal: timeoutSignal(INSTALL_TIMEOUT),
+      });
+      status = response.status;
+      try {
+        body = await response.json();
+      } catch {
+        body = null;
+      }
+      if (!response.ok || !body || body.ok !== true) {
+        sendJson(res, status || 502, {
+          ok: false,
+          error: 'market-install-failed',
+          message: text(body && (body.message || body.error)) || `技能市场返回 HTTP ${status}`,
+        });
+        return;
+      }
+    } catch (error) {
+      sendJson(res, 502, { ok: false, error: 'market-unreachable', message: messageOf(error) });
+      return;
     }
-    if (!response.ok || !body || body.ok !== true) {
-      sendJson(res, status || 502, {
+  } else {
+    // The market bundle is optional: fetch the published file bundle directly.
+    try {
+      const result = await nativeInstall(ctx, { slug, namespace, version: text(payload.version) });
+      sendJson(res, 200, {
+        ok: true,
+        slug,
+        namespace,
+        directory: result.directory,
+        name: result.name,
+        version: result.version,
+        files: result.files,
+        bytes: result.bytes,
+        installed: true,
+        via: 'native',
+      });
+      return;
+    } catch (error) {
+      sendJson(res, 502, {
         ok: false,
-        error: 'market-install-failed',
-        message: text(body && (body.message || body.error)) || `技能市场返回 HTTP ${status}`,
+        error: 'install-failed',
+        message: messageOf(error),
       });
       return;
     }
-  } catch (error) {
-    sendJson(res, 502, { ok: false, error: 'market-unreachable', message: messageOf(error) });
-    return;
   }
 
   const install = (body && body.install) || {};
@@ -911,14 +1119,34 @@ async function sendInstall(ctx, req, res) {
 
 /** Slugs of everything currently installed, so a card can say "installed". */
 async function installedSlugs(ctx) {
+  const slugs = new Set();
   const registry = ctx.get('skills');
-  if (!registry) return new Set();
-  try {
-    const snapshot = await observe(registry);
-    return new Set(snapshot.skills.map((summary) => slugOf(summary)).filter(Boolean));
-  } catch {
-    return new Set();
+  if (registry) {
+    try {
+      const snapshot = await observe(registry);
+      for (const summary of snapshot.skills) {
+        const slug = slugOf(summary);
+        if (slug) slugs.add(slug);
+      }
+    } catch {
+      /* an unreadable registry just means "nothing known from that side" */
+    }
   }
+  // Also trust the disk: a skill installed natively (or by any other tool) sits
+  // in `<handle>--<slug>` and only reaches the registry on the next process
+  // start, so without this the card would keep offering 安装 after it succeeded.
+  try {
+    for (const entry of readdirSync(SKILLS_ROOT, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const name = entry.name;
+      if (name.startsWith('.')) continue;
+      const cut = name.indexOf('--');
+      if (cut > 0 && cut + 2 < name.length) slugs.add(name.slice(cut + 2));
+    }
+  } catch {
+    /* no skills directory yet: nothing installed */
+  }
+  return slugs;
 }
 
 /* ------------------------------------------------------------------ */
