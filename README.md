@@ -40,10 +40,10 @@ the panel falls back to the native path rather than failing.
 
 ```bash
 # recommended: the packed release asset, nothing else needed
-dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.0.3/dsh-better-skillmanager-v1.0.3.tgz
+dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.1.0/dsh-better-skillmanager-v1.1.0.tgz
 
 # straight from the repository (needs git on the machine; pins the tag)
-dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.0.3
+dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.1.0
 
 # local checkout, for development
 dsh plugin --profile desktop add C:\path\to\dsh-better-skillmanager
@@ -112,6 +112,11 @@ All are same-origin and served by the harness web server.
 
 - `GET /dsh-better-skillmanager/list` — skill summaries plus market matches. `?refresh=1`
   clears the market cache first.
+- `POST /dsh-better-skillmanager/import` — import a local file. Body is the raw
+  bytes, the original name travels in the `x-file-name` header (URL-encoded),
+  and the answer is `{ ok, imported: { name, dir, files, bytes }, file }`.
+- `GET /dsh-better-skillmanager/import-info` — the accepted extensions and the
+  size limits, so the dialog explains exactly what the endpoint enforces.
 - `GET /dsh-better-skillmanager/skill?name=<name>` — one skill's `SKILL.md` body.
 - `GET /dsh-better-skillmanager/icon?slug=<slug>` — the market icon, proxied. Cached for an
   hour; unknown or iconless slugs answer `404` and the panel draws a letter
@@ -223,6 +228,38 @@ ledger.
 
 Deleting the directory directly would leave the panel listing a skill whose
 files are gone, which is why the market plugin stays in the loop.
+
+## Local import
+
+The 导入 / Import button in the header opens a dialog that takes a skill straight
+from this computer — drag files onto the drop zone or click it to browse. Each
+accepted file becomes one skill directory under `~/.dsh/skills`.
+
+| Extension | Treated as |
+| --- | --- |
+| `.zip` | A skill directory, zipped. It must contain a `SKILL.md`, either at the archive root or one directory down; every other entry is written through untouched. |
+| `.md`, `.markdown`, `.txt` | A single instruction file, stored as `SKILL.md`. The name comes from the frontmatter `name`, falling back to the file name. |
+
+Limits, enforced by `POST /import` (`GET /import-info` publishes the same
+numbers so the dialog cannot drift from the endpoint):
+
+- 24 MB per request, 8 MB per file inside an archive, 2000 entries per archive.
+- ZIP is parsed in-process (`node:zlib` `inflateRawSync`) — stored and deflated
+  entries work, ZIP64 and encrypted archives are rejected with
+  `zip-unreadable` rather than half-imported.
+- Entry paths are sanitised (`archivePath`): backslashes, `./`, absolute paths,
+  drive letters, `..`, and `__MACOSX` / `.DS_Store` noise are refused or skipped,
+  and every write is re-checked against the skill root (`unsafe-path`).
+- Directory names are derived from the skill name, then de-duplicated
+  (`name`, `name-2`, … `name-199`), so importing twice never overwrites.
+- Files are written into the target directory directly; a failure part-way
+  leaves what was written so you can inspect it, and the endpoint reports the
+  human-readable reason (`missing-skill-md`, `file-too-large`, `too-many-files`,
+  `unsupported-type`, `body-too-large`, …).
+
+Frontmatter is read after stripping a UTF-8 BOM, so skills authored with
+PowerShell or Notepad keep their declared name instead of falling back to the
+file name.
 
 ## On-disk skills
 
