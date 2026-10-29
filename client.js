@@ -219,6 +219,12 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-secondary, #6b6f76);
 }
 .dsk-grow { flex: 1 1 auto; min-width: 0; }
+.dsk-hbtn {
+  /* Import and Refresh sit side by side and must look like a pair. */
+  min-width: 86px;
+  justify-content: center;
+  padding: 8px 10px;
+}
 .dsk-btn {
   appearance: none;
   border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.12));
@@ -2275,25 +2281,40 @@ window.__ModuleLoader__.load({
       };
     }
 
-    function UploadGlyph(props) {
-      const size = props && props.size ? props.size : 22;
+    /* Header button glyphs: the user's own SVGs, inlined as path data. */
+    const IMPORT_PATHS = [
+      'M135.63636347 500.34090869v309.19090957c0 43.52727305 35.30454521 78.83181826 78.83181827 78.83181827h595.06363652a78.83181826 78.83181826 0 0 0 78.83181826-78.83181827V214.46818174A78.83181826 78.83181826 0 0 0 809.53181826 135.63636347h-284.27727305a32.72727305 32.72727305 0 0 1 0-65.45454521h284.27727305A144.28636348 144.28636348 0 0 1 953.81818174 214.46818174v595.06363652a144.28636348 144.28636348 0 0 1-144.28636348 144.28636348H214.46818174A144.28636348 144.28636348 0 0 1 70.18181826 809.53181826v-309.19090957a32.72727305 32.72727305 0 1 1 65.45454522 0z',
+      'M101.15 176.50454521l15.13636347 0.81818174a423.9 423.9 0 0 1 396.24545479 358.56818174 32.72727305 32.72727305 0 0 0 64.67727305-9.98181738A489.35454521 489.35454521 0 0 0 119.84545479 111.95l-15.17727305-0.81818174A32.72727305 32.72727305 0 0 0 101.15 176.54545479z',
+      'M542.96818174 525.54090869l-139.90909043-76.45909043a32.72727305 32.72727305 0 0 0-31.37727305 57.43636348l149.89090869 81.94090957a53.18181826 53.18181826 0 0 0 70.15909131-17.79545479l93.68181827-144.81818173a32.72727305 32.72727305 0 0 0-54.98181827-35.59090958l-87.46363652 135.28636348z',
+    ];
+    const REFRESH_PATH =
+      'M158.72 71.92064c-3.2 11.20256 12.89216 27.5968 25.6 30.72l97.28 20.48c-145.408 78.848-230.4 229.9392-230.4 397.03552 0 249.86624 206.5664 452.88448 460.8 452.88448s460.8-203.01824 460.8-452.88448a452.77696 452.77696 0 0 0-226.432-389.632c-11.136-6.25152-28.32896-3.75808-34.688 7.95648a28.08832 28.08832 0 0 0 10.24 35.84 400.24064 400.24064 0 0 1 199.68 348.16c0 224.1024-181.59104 399.36-409.6 399.36s-409.6-175.2576-409.6-399.36c0-155.38688 81.13152-295.58784 220.16-363.52l-25.6 128c-3.1744 12.4928 6.8864 24.71424 19.59424 27.83232a23.71072 23.71072 0 0 0 28.60544-17.1776l42.10176-175.68768v-5.46304a22.71744 22.71744 0 0 0-18.26816-22.64576l-178.75456-41.38496C171.27936 46.22336 161.92 60.7232 158.72 71.92064z';
+
+    /** 14px glyph from the supplied icon set; both header buttons use it. */
+    function HeadGlyph(props) {
+      const size = props && props.size ? props.size : 14;
+      const paths = props.paths || [];
       return h(
         'svg',
         {
-          viewBox: '0 0 24 24',
+          viewBox: '0 0 1024 1024',
           width: size,
           height: size,
-          fill: 'none',
-          stroke: 'currentColor',
-          strokeWidth: 1.7,
-          strokeLinecap: 'round',
-          strokeLinejoin: 'round',
+          fill: 'currentColor',
           'aria-hidden': true,
+          focusable: 'false',
+          style: { flex: '0 0 auto', display: 'block' },
         },
-        h('path', { d: 'M12 16V4' }),
-        h('path', { d: 'm7.5 8.5 4.5-4.5 4.5 4.5' }),
-        h('path', { d: 'M4 15v3.2A1.8 1.8 0 0 0 5.8 20h12.4a1.8 1.8 0 0 0 1.8-1.8V15' }),
+        paths.map((d, index) => h('path', { d, key: index })),
       );
+    }
+
+    function ImportGlyph(props) {
+      return h(HeadGlyph, { size: (props && props.size) || 14, paths: IMPORT_PATHS });
+    }
+
+    function RefreshGlyph(props) {
+      return h(HeadGlyph, { size: (props && props.size) || 14, paths: [REFRESH_PATH] });
     }
 
     /** 1234 -> "1.2 KB" — file sizes in the dialog, nothing more. */
@@ -2465,7 +2486,7 @@ window.__ModuleLoader__.load({
                     event.target.value = '';
                   },
                 }),
-                h(UploadGlyph, { size: 22 }),
+                h(ImportGlyph, { size: 22 }),
                 h(
                   'span',
                   { className: 'dsk-drop-title' },
@@ -2721,17 +2742,18 @@ window.__ModuleLoader__.load({
           h(
             'button',
             {
-              className: 'dsk-btn',
+              className: 'dsk-btn dsk-hbtn',
               type: 'button',
               title: t('Import a skill from this computer', '从本机导入技能'),
               onClick: () => setImportOpen(true),
             },
-            h(UploadGlyph, { size: 14 }),
+            h(ImportGlyph, { size: 14 }),
             t('Import', '导入'),
           ),
           h(
             'button',
-            { className: 'dsk-btn', type: 'button', onClick: reload, disabled: busy },
+            { className: 'dsk-btn dsk-hbtn', type: 'button', onClick: reload, disabled: busy },
+            h(RefreshGlyph, { size: 14 }),
             busy ? t('Refreshing…', '刷新中…') : t('Refresh', '刷新'),
           ),
         );
