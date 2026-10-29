@@ -32,7 +32,7 @@ published file bundle from skillhub (`/api/v1/skills/<slug>/files` then one
 swapped in with a rename) and deletes the tree after the same validation the
 other routes use.
 
-If [`@montersy123/dsh-skill-market`](https://github.com/polang233/dsh-plugin-index)
+If [`@montersy123/dsh-skill-market`](https://www.npmjs.com/package/@montersy123/dsh-skill-market)
 happens to be installed, both actions are delegated to it instead, because that
 bundle also owns the disabled-skills store and version records. It is optional:
 its absence is detected by probing `/skill-market/api/state` once a minute, and
@@ -40,10 +40,10 @@ the panel falls back to the native path rather than failing.
 
 ```bash
 # recommended: the packed release asset, nothing else needed
-dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.0.2/dsh-better-skillmanager-v1.0.2.tgz
+dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.0.3/dsh-better-skillmanager-v1.0.3.tgz
 
 # straight from the repository (needs git on the machine; pins the tag)
-dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.0.2
+dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.0.3
 
 # local checkout, for development
 dsh plugin --profile desktop add C:\path\to\dsh-better-skillmanager
@@ -194,24 +194,30 @@ than a broken image. Skills the market serves no icon for (for example
 
 ## Installing
 
-The install endpoint is a guarded proxy, for the same reason as uninstall: the
-skill-market plugin owns the directory layout, the version ledger and the
-registry republish. It validates JSON, the slug and the namespace
-(`@publisher`) before anything touches the file system, forwards to
-`/skill-market/api/install`, then re-reads the registry so the response reports
-whether the skill is really installed.
+The install endpoint is guarded, and local by default. It validates JSON, the
+slug and the namespace (`@publisher`) before anything touches the file system,
+then asks the market for the published file list
+(`/api/v1/skills/<slug>/files`), downloads every entry (`/file?path=…`) checking
+the advertised sha256, writes the tree into a staging directory beside the
+target and swaps it in with a rename — so a truncated or tampered download never
+leaves a half-installed skill behind. The directory is named
+`<publisher-handle>--<slug>`, the same layout the market plugin uses.
+
+If the skill-market plugin answers its probe (`/skill-market/api/state`, cached
+for 60 seconds), the request is delegated to its `/skill-market/api/install`
+instead, because that bundle owns the disabled-skills store and the version
+ledger.
 
 ## Uninstalling
-
-The endpoint is a guarded proxy, not a delete of its own:
 
 1. It refuses anything but JSON, a missing `name` or `dir`, an unknown name, a
    built-in skill (`403`), a directory that disagrees with the registry (`409`),
    a path outside the known skill roots (`403`), and a directory that is
    already gone (`404`).
-2. It forwards `{ name: <install directory> }` to the skill-market plugin's own
-   `/skill-market/api/uninstall`, which owns the install layout, the disabled
-   store and the version ledger, and which re-publishes the registry afterwards.
+2. If the skill-market plugin answers its probe, the request is forwarded to its
+   `/skill-market/api/uninstall` (it owns the disabled store and the version
+   ledger, and republishes the registry afterwards). Otherwise the tree is
+   removed directly with retries.
 3. It reads the tree back: `leftover` reports files still on disk (a held
    handle), `stillRegistered` reports a name the current process still serves.
 
