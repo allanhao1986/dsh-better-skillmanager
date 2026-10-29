@@ -233,6 +233,7 @@ window.__ModuleLoader__.load({
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  gap: 6px;
   white-space: nowrap;
 }
 .dsk-btn:hover:not(:disabled) {
@@ -992,6 +993,168 @@ window.__ModuleLoader__.load({
   line-height: 1.78;
   color: var(--dsw-alias-label-primary, #1f2329);
 }
+/* ---- local import dialog ---- */
+.dsk-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0, 0, 0, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+}
+.dsk-dialog {
+  width: min(560px, 100%);
+  max-height: min(76vh, 680px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.12));
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.34);
+  overflow: hidden;
+}
+.dsk-dialog-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 18px 13px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.1));
+}
+.dsk-dialog-h h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--dsw-alias-label-primary, #1f2329);
+}
+.dsk-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dsk-dialog-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.1));
+  background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.05));
+}
+.dsk-dialog-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+}
+.dsk-drop {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 26px 18px;
+  border-radius: 12px;
+  border: 1.5px dashed var(--dsw-alias-border-l2, rgba(127, 127, 127, 0.45));
+  background: rgba(127, 127, 127, 0.06);
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  text-align: center;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.dsk-drop[data-drag='true'] {
+  border-color: #2b6cb0;
+  background: rgba(43, 108, 176, 0.12);
+  color: var(--dsw-alias-label-primary, #1f2329);
+}
+.dsk-drop input[type='file'] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.dsk-drop-title {
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary, #1f2329);
+}
+.dsk-drop-hint {
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+.dsk-types {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dsk-type-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+}
+.dsk-type-ext {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(127, 127, 127, 0.35));
+  justify-self: start;
+  color: var(--dsw-alias-label-primary, #1f2329);
+}
+.dsk-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: rgba(127, 127, 127, 0.08);
+}
+.dsk-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary, #1f2329);
+}
+.dsk-file-size {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-variant-numeric: tabular-nums;
+}
+.dsk-file-drop {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+.dsk-file-drop:hover { color: #dc2626; }
+.dsk-result-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.dsk-result-row[data-ok='true'] { color: #1f9254; }
+.dsk-result-row[data-ok='false'] { color: #dc2626; }
+.dsk-result-mark { flex: 0 0 auto; }
+.dsk-result-text { flex: 1 1 auto; min-width: 0; word-break: break-word; }
 @media (max-width: 880px) {
   .dsk-page { overflow-y: auto; }
   .dsk-body { grid-template-columns: minmax(0, 1fr); }
@@ -2112,10 +2275,284 @@ window.__ModuleLoader__.load({
       };
     }
 
+    function UploadGlyph(props) {
+      const size = props && props.size ? props.size : 22;
+      return h(
+        'svg',
+        {
+          viewBox: '0 0 24 24',
+          width: size,
+          height: size,
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.7,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true,
+        },
+        h('path', { d: 'M12 16V4' }),
+        h('path', { d: 'm7.5 8.5 4.5-4.5 4.5 4.5' }),
+        h('path', { d: 'M4 15v3.2A1.8 1.8 0 0 0 5.8 20h12.4a1.8 1.8 0 0 0 1.8-1.8V15' }),
+      );
+    }
+
+    /** 1234 -> "1.2 KB" — file sizes in the dialog, nothing more. */
+    function formatBytes(value) {
+      const size = Number(value) || 0;
+      if (size < 1024) return size + ' B';
+      if (size < 1024 * 1024) return (size / 1024).toFixed(1) + ' KB';
+      return (size / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    /* What the importer accepts; mirrors the host's IMPORT_INFO so the dialog
+       explains the same rules the endpoint enforces. */
+    const IMPORT_ACCEPT = '.zip,.md,.markdown,.txt';
+    const IMPORT_TYPES = [
+      { ext: '.zip', hint: '技能目录压缩包 —— 内含 SKILL.md（可在根目录，也可套一层目录），其余文件原样带进来' },
+      { ext: '.md', hint: '单个技能说明文件 —— 以 SKILL.md 保存，名字取 frontmatter 的 name' },
+      { ext: '.markdown', hint: '同 .md，按 Markdown 处理' },
+      { ext: '.txt', hint: '纯文本说明 —— 同上' },
+    ];
+
+    function buildImport(ctx) {
+      function ImportDialog(props) {
+        const t = props.t;
+        const [files, setFiles] = React.useState([]);
+        const [busy, setBusy] = React.useState(false);
+        const [drag, setDrag] = React.useState(false);
+        const [results, setResults] = React.useState([]);
+
+        function addFiles(incoming) {
+          const next = Array.from(incoming || []);
+          if (!next.length) return;
+          setFiles((prev) => {
+            const merged = prev.slice();
+            for (const file of next) {
+              if (!merged.some((item) => item.name === file.name && item.size === file.size)) {
+                merged.push(file);
+              }
+            }
+            return merged;
+          });
+          setResults([]);
+        }
+
+        function removeAt(index) {
+          setFiles((prev) => prev.filter((_, at) => at !== index));
+        }
+
+        async function run() {
+          if (!files.length || busy) return;
+          setBusy(true);
+          setResults([]);
+          const collected = [];
+          for (const file of files) {
+            try {
+              const body = await file.arrayBuffer();
+              const response = await fetch(ROUTE + '/import', {
+                method: 'POST',
+                headers: {
+                  'content-type': 'application/octet-stream',
+                  'x-file-name': encodeURIComponent(file.name),
+                },
+                body,
+              });
+              let payload = null;
+              try {
+                payload = await response.json();
+              } catch {
+                payload = null;
+              }
+              if (response.ok && payload && payload.ok) {
+                collected.push({
+                  ok: true,
+                  file: file.name,
+                  text:
+                    (payload.imported.name || '') +
+                    ' → ' +
+                    (payload.imported.dir || '') +
+                    ' · ' +
+                    t(
+                      payload.imported.files + ' files',
+                      payload.imported.files + ' 个文件',
+                    ),
+                });
+              } else {
+                collected.push({
+                  ok: false,
+                  file: file.name,
+                  text: (payload && (payload.message || payload.error)) || 'HTTP ' + response.status,
+                });
+              }
+            } catch (error) {
+              collected.push({ ok: false, file: file.name, text: String(error.message || error) });
+            }
+          }
+          setBusy(false);
+          setResults(collected);
+          if (collected.some((entry) => entry.ok) && typeof props.onDone === 'function') props.onDone();
+          setFiles([]);
+        }
+
+        const rows = files.map((file, index) =>
+          h(
+            'div',
+            { className: 'dsk-file-row', key: file.name + ':' + file.size },
+            h('span', { className: 'dsk-file-name', title: file.name }, file.name),
+            h('span', { className: 'dsk-file-size' }, formatBytes(file.size)),
+            h(
+              'button',
+              {
+                className: 'dsk-file-drop',
+                type: 'button',
+                disabled: busy,
+                title: t('Remove', '移除'),
+                onClick: () => removeAt(index),
+              },
+              '×',
+            ),
+          ),
+        );
+
+        return h(
+          'div',
+          {
+            className: 'dsk-dialog-backdrop',
+            role: 'presentation',
+            onClick: (event) => {
+              if (event.target === event.currentTarget && !busy) props.onClose();
+            },
+          },
+          h(
+            'div',
+            { className: 'dsk-dialog', role: 'dialog', 'aria-modal': 'true' },
+            h(
+              'div',
+              { className: 'dsk-dialog-h' },
+              h('h2', null, t('Import local skill', '导入本地技能')),
+              h(
+                'button',
+                { className: 'dsk-modal-close', type: 'button', onClick: props.onClose, disabled: busy },
+                '×',
+              ),
+            ),
+            h(
+              'div',
+              { className: 'dsk-dialog-body' },
+              h(
+                'label',
+                {
+                  className: 'dsk-drop',
+                  'data-drag': drag ? 'true' : 'false',
+                  onDragOver: (event) => {
+                    event.preventDefault();
+                    setDrag(true);
+                  },
+                  onDragLeave: () => setDrag(false),
+                  onDrop: (event) => {
+                    event.preventDefault();
+                    setDrag(false);
+                    addFiles(event.dataTransfer && event.dataTransfer.files);
+                  },
+                },
+                h('input', {
+                  type: 'file',
+                  multiple: true,
+                  accept: IMPORT_ACCEPT,
+                  disabled: busy,
+                  onChange: (event) => {
+                    addFiles(event.target.files);
+                    event.target.value = '';
+                  },
+                }),
+                h(UploadGlyph, { size: 22 }),
+                h(
+                  'span',
+                  { className: 'dsk-drop-title' },
+                  t('Drop files here, or click to browse', '把文件拖到这里，或点击选择文件'),
+                ),
+                h(
+                  'span',
+                  { className: 'dsk-drop-hint' },
+                  t('One skill per file · up to 24 MB', '一个文件一个技能 · 单个文件最大 24 MB'),
+                ),
+              ),
+              h(
+                'div',
+                { className: 'dsk-types' },
+                IMPORT_TYPES.map((entry) =>
+                  h(
+                    'div',
+                    { className: 'dsk-type-row', key: entry.ext },
+                    h('span', { className: 'dsk-type-ext' }, entry.ext),
+                    h('span', null, entry.hint),
+                  ),
+                ),
+              ),
+              rows.length ? h('div', { style: { display: 'grid', gap: '6px' } }, rows) : null,
+              results.length
+                ? h(
+                    'div',
+                    { style: { display: 'grid', gap: '6px' } },
+                    results.map((entry, index) =>
+                      h(
+                        'div',
+                        {
+                          className: 'dsk-result-row',
+                          key: entry.file + ':' + index,
+                          'data-ok': entry.ok ? 'true' : 'false',
+                        },
+                        h('span', { className: 'dsk-result-mark' }, entry.ok ? '✓' : '✗'),
+                        h(
+                          'span',
+                          { className: 'dsk-result-text' },
+                          entry.ok ? entry.text : entry.file + ' — ' + entry.text,
+                        ),
+                      ),
+                    ),
+                  )
+                : null,
+            ),
+            h(
+              'div',
+              { className: 'dsk-dialog-foot' },
+              h(
+                'span',
+                { className: 'dsk-dialog-note' },
+                t(
+                  'Installed into ~/.dsh/skills, one directory per skill.',
+                  '导入到 ~/.dsh/skills，一个技能一个目录。',
+                ),
+              ),
+              h(
+                'button',
+                { className: 'dsk-cta dsk-cta-ghost dsk-cta-sm', type: 'button', onClick: props.onClose, disabled: busy },
+                t('Close', '关闭'),
+              ),
+              h(
+                'button',
+                {
+                  className: 'dsk-cta dsk-cta-primary dsk-cta-sm',
+                  type: 'button',
+                  disabled: !files.length || busy,
+                  onClick: run,
+                },
+                busy
+                  ? t('Importing…', '导入中…')
+                  : t('Import ' + (files.length || ''), '导入' + (files.length ? ' ' + files.length + ' 个' : '')),
+              ),
+            ),
+          ),
+        );
+      }
+      return ImportDialog;
+    }
+
     function buildPage(ctx) {
       // Built once: a component type created during render would remount the
       // browse pane on every parent render and throw away its paging state.
       const BrowsePane = buildBrowse(ctx);
+      const ImportDialog = buildImport(ctx);
 
       return function SkillsPage() {
         const t = useLocale(ctx);
@@ -2123,6 +2560,7 @@ window.__ModuleLoader__.load({
 
         // Browse is the first tab, so it is also the one the panel opens on.
         const [view, setView] = React.useState('browse');
+        const [importOpen, setImportOpen] = React.useState(false);
         const [state, setState] = React.useState({ status: 'loading', data: null, error: '' });
         const [nonce, setNonce] = React.useState(0);
         const [hardRefresh, setHardRefresh] = React.useState(false);
@@ -2279,6 +2717,17 @@ window.__ModuleLoader__.load({
                       )
                     : t('No skill found', '没有找到技能'),
             ),
+          ),
+          h(
+            'button',
+            {
+              className: 'dsk-btn',
+              type: 'button',
+              title: t('Import a skill from this computer', '从本机导入技能'),
+              onClick: () => setImportOpen(true),
+            },
+            h(UploadGlyph, { size: 14 }),
+            t('Import', '导入'),
           ),
           h(
             'button',
@@ -2683,6 +3132,13 @@ window.__ModuleLoader__.load({
                   setSelected(name);
                 },
               }),
+          importOpen
+            ? h(ImportDialog, {
+                t: t,
+                onClose: () => setImportOpen(false),
+                onDone: reload,
+              })
+            : null,
           // Last child on purpose: the hover card must not be inside any
           // scrolling pane.
           h(TipsLayer, null),
