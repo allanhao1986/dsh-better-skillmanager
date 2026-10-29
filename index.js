@@ -32,6 +32,7 @@ import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync }
 import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
+import { inflateRawSync } from 'node:zlib';
 
 const ROUTE_PREFIX = '/dsh-better-skillmanager';
 const MARKET_BASE = 'https://api.skillhub.cn';
@@ -142,6 +143,14 @@ async function handle(ctx, req, res) {
     }
     if (sub === '/uninstall' || sub === '/uninstall/') {
       await sendUninstall(ctx, req, res);
+      return;
+    }
+    if (sub === '/import' || sub === '/import/') {
+      await sendImport(ctx, req, res);
+      return;
+    }
+    if (sub === '/import-info' || sub === '/import-info/') {
+      sendJson(res, 200, { ok: true, ...IMPORT_INFO });
       return;
     }
     sendJson(res, 404, { ok: false, error: 'unknown-route', path: sub });
@@ -1413,6 +1422,304 @@ function stripFrontmatter(content) {
 }
 
 /* ------------------------------------------------------------------ */
+/* local import                                                        */
+/* ------------------------------------------------------------------ */
+
+const IMPORT_MAX_BYTES = 24 * 1024 * 1024;
+const IMPORT_MAX_FILE_BYTES = 8 * 1024 * 1024;
+const IMPORT_MAX_FILES = 2000;
+
+const IMPORT_INFO = {
+  maxBytes: IMPORT_MAX_BYTES,
+  maxFiles: IMPORT_MAX_FILES,
+  types: [
+    {
+      ext: '.zip',
+      label: '技能目录压缩包',
+      hint: '里面要有 SKILL.md（可以在压缩包根目录，也可以套一层目录），其余文件原样带进去',
+    },
+    { ext: '.md', label: '单个技能说明文件', hint: '以 SKILL.md 保存；名字取 frontmatter 的 name，没有就用文件名' },
+    { ext: '.markdown', label: '同 .md', hint: '同上' },
+    { ext: '.txt', label: '纯文本技能说明', hint: '同上，按 Markdown 处理' },
+  ],
+};
+
+/** Read a request body, refusing anything over `limit`. */
+async function readBytes(req, limit) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > limit) {
+      const error = new Error('body-too-large');
+      error.status = 413;
+      error.code = 'body-too-large';
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+const ZIP_EOCD = 0x06054b50;
+const ZIP_CENTRAL = 0x02014b50;
+
+/**
+ * Minimal ZIP reader: central directory walk, stored and deflated entries only.
+ *
+ * A skill package is a handful of small text files, so a full ZIP64 / encrypted
+ * implementation would be dead weight; anything this cannot read is reported
+ * instead of half-extracted.
+ */
+function unzip(buffer) {
+  let eocd = -1;
+  const floor = Math.max(0, buffer.length - 66 * 1024);
+  for (let at = buffer.length - 22; at >= floor; at -= 1) {
+    if (buffer.readUInt32LE(at) === ZIP_EOCD) {
+      eocd = at;
+      break;
+    }
+  }
+  if (eocd < 0) throw Object.assign(new Error('not a zip archive'), { code: 'zip-unreadable' });
+
+  const count = buffer.readUInt16LE(eocd + 10);
+  let offset = buffer.readUInt32LE(eocd + 16);
+  if (!count || offset >= buffer.length) {
+    throw Object.assign(new Error('empty zip archive'), { code: 'zip-unreadable' });
+  }
+
+  const entries = [];
+  for (let index = 0; index < count; index += 1) {
+    if (offset + 46 > buffer.length || buffer.readUInt32LE(offset) !== ZIP_CENTRAL) {
+      throw Object.assign(new Error('broken zip central directory'), { code: 'zip-unreadable' });
+    }
+    const method = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const size = buffer.readUInt32LE(offset + 24);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localOffset = buffer.readUInt32LE(offset + 42);
+    const name = buffer.toString('utf8', offset + 46, offset + 46 + nameLength);
+
+    if (size === 0xffffffff || compressedSize === 0xffffffff || localOffset === 0xffffffff) {
+      throw Object.assign(new Error('zip64 archives are not supported'), { code: 'zip-unreadable' });
+    }
+
+    if (!name.endsWith('/')) {
+      const localNameLength = buffer.readUInt16LE(localOffset + 26);
+      const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+      const start = localOffset + 30 + localNameLength + localExtraLength;
+      const raw = buffer.subarray(start, start + compressedSize);
+      let data;
+      if (method === 0) data = Buffer.from(raw);
+      else if (method === 8) data = inflateRawSync(raw);
+      else {
+        throw Object.assign(new Error(`unsupported zip compression method ${method}`), {
+          code: 'zip-unreadable',
+        });
+      }
+      if (data.length > IMPORT_MAX_FILE_BYTES) {
+        throw Object.assign(new Error(`entry too large: ${name}`), { code: 'file-too-large' });
+      }
+      entries.push({ name, data });
+    }
+
+    if (entries.length > IMPORT_MAX_FILES) {
+      throw Object.assign(new Error('too many files in archive'), { code: 'too-many-files' });
+    }
+
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+
+  return entries;
+}
+
+/** Normalise an archive path, refusing anything that could escape the target. */
+function archivePath(name) {
+  const cleaned = String(name)
+    .replace(/\\/g, '/')
+    .replace(/^\.?\//, '')
+    .replace(/\/{2,}/g, '/');
+  if (!cleaned) return '';
+  if (cleaned.startsWith('/') || /^[a-z]:/i.test(cleaned)) return '';
+  const parts = cleaned.split('/').filter((part) => part && part !== '.');
+  if (!parts.length || parts.some((part) => part === '..')) return '';
+  if (parts[0] === '__MACOSX' || parts[parts.length - 1] === '.DS_Store') return '';
+  return parts.join('/');
+}
+
+/** The directory inside the archive that holds SKILL.md, as a prefix ('' = root). */
+function skillPrefix(entries) {
+  const candidates = [];
+  for (const entry of entries) {
+    const path = archivePath(entry.name);
+    if (!path) continue;
+    const parts = path.split('/');
+    if (parts[parts.length - 1].toLowerCase() !== 'skill.md') continue;
+    candidates.push(parts.slice(0, -1).join('/'));
+  }
+  if (!candidates.length) return null;
+  candidates.sort((left, right) => left.split('/').length - right.split('/').length);
+  return candidates[0];
+}
+
+function uniqueDirectory(base) {
+  const safe = installSegment(base, 'skill') || 'skill';
+  let candidate = safe;
+  for (let index = 2; index < 200; index += 1) {
+    const target = join(SKILLS_ROOT, candidate);
+    if (!existsSync(target) && contains(SKILLS_ROOT, candidate)) return candidate;
+    candidate = `${safe}-${index}`;
+  }
+  throw Object.assign(new Error('cannot find a free directory name'), { code: 'directory-exhausted' });
+}
+
+function skillNameFrom(content, fallback) {
+  const block = frontmatterText(content);
+  const named = frontmatterValue(block, 'name') || frontmatterValue(block, 'slug');
+  return (named || fallback || 'skill').trim();
+}
+
+function writeSkillFiles(directory, files) {
+  const root = join(SKILLS_ROOT, directory);
+  if (!contains(SKILLS_ROOT, directory)) {
+    throw Object.assign(new Error('refusing to write outside the skills directory'), {
+      code: 'outside-skill-root',
+    });
+  }
+  mkdirSync(root, { recursive: true });
+  let bytes = 0;
+  for (const file of files) {
+    const relative = archivePath(file.name);
+    if (!relative) continue;
+    const target = resolve(join(root, relative));
+    if (!target.startsWith(resolve(root) + sep)) {
+      throw Object.assign(new Error('refusing to write outside the skill directory'), {
+        code: 'unsafe-path',
+      });
+    }
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, file.data);
+    bytes += file.data.length;
+  }
+  return { files: files.length, bytes };
+}
+
+function importArchive(buffer, fileName) {
+  const entries = unzip(buffer).filter((entry) => archivePath(entry.name));
+  const prefix = skillPrefix(entries);
+  if (prefix === null) {
+    throw Object.assign(new Error('the archive has no SKILL.md'), { code: 'missing-skill-md' });
+  }
+  const keep = entries
+    .filter((entry) => {
+      const path = archivePath(entry.name);
+      return prefix === '' ? true : path === prefix || path.startsWith(prefix + '/');
+    })
+    .map((entry) => ({
+      name: archivePath(entry.name).slice(prefix === '' ? 0 : prefix.length + 1),
+      data: entry.data,
+    }))
+    .filter((entry) => entry.name);
+
+  const manifest = keep.find((entry) => entry.name.toLowerCase() === 'skill.md');
+  const fallback = (prefix.split('/').pop() || fileName.replace(/\.[^.]+$/, '')).trim();
+  const name = skillNameFrom(manifest ? manifest.data.toString('utf8') : '', fallback);
+  const directory = uniqueDirectory(name.toLowerCase() === name ? name : name);
+  const written = writeSkillFiles(directory, keep);
+  return { name, dir: directory, ...written };
+}
+
+function importMarkdown(buffer, fileName) {
+  const content = buffer.toString('utf8');
+  if (!content.trim()) {
+    throw Object.assign(new Error('the file is empty'), { code: 'empty-file' });
+  }
+  const fallback = fileName.replace(/\.[^.]+$/, '').trim() || 'skill';
+  const name = skillNameFrom(content, fallback);
+  const directory = uniqueDirectory(name);
+  const written = writeSkillFiles(directory, [{ name: 'SKILL.md', data: buffer }]);
+  return { name, dir: directory, ...written };
+}
+
+/**
+ * POST /import — one local file in the body, its name in `x-file-name`.
+ *
+ * Skills on this machine are directories with a SKILL.md, so the two natural
+ * shapes are "a zipped directory" and "just the SKILL.md". Both end up as
+ * `~/.dsh/skills/<name>/`, which is exactly what the on-disk scan already reads.
+ */
+async function sendImport(ctx, req, res) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { ok: false, error: 'method-not-allowed', message: 'POST only' });
+    return;
+  }
+
+  let fileName = 'import.bin';
+  try {
+    fileName = decodeURIComponent(String(req.headers['x-file-name'] || 'import.bin'));
+  } catch {
+    fileName = String(req.headers['x-file-name'] || 'import.bin');
+  }
+  const lower = fileName.toLowerCase();
+  const kind = lower.endsWith('.zip')
+    ? 'zip'
+    : lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.txt')
+      ? 'markdown'
+      : '';
+
+  if (!kind) {
+    sendJson(res, 415, {
+      ok: false,
+      error: 'unsupported-type',
+      message: '只支持 .zip / .md / .markdown / .txt',
+      supported: IMPORT_INFO.types.map((entry) => entry.ext),
+    });
+    return;
+  }
+
+  let body;
+  try {
+    body = await readBytes(req, IMPORT_MAX_BYTES);
+  } catch (error) {
+    sendJson(res, error.status || 400, { ok: false, error: error.code || 'bad-body', message: messageOf(error) });
+    return;
+  }
+  if (!body.length) {
+    sendJson(res, 400, { ok: false, error: 'empty-file', message: '文件是空的' });
+    return;
+  }
+
+  try {
+    const imported = kind === 'zip' ? importArchive(body, fileName) : importMarkdown(body, fileName);
+    sendJson(res, 200, { ok: true, imported, file: fileName });
+  } catch (error) {
+    sendJson(res, error.code === 'file-too-large' || error.code === 'too-many-files' ? 413 : 400, {
+      ok: false,
+      error: error.code || 'import-failed',
+      message: error.code ? friendlyImportError(error) : messageOf(error),
+    });
+  }
+}
+
+const IMPORT_ERROR_TEXT = {
+  'zip-unreadable': '这个 zip 读不了（可能已损坏，或用了暂不支持的压缩方式）',
+  'missing-skill-md': '压缩包里没有 SKILL.md，无法识别成技能',
+  'empty-file': '文件是空的',
+  'file-too-large': '压缩包里单个文件超过 8 MB',
+  'too-many-files': '压缩包里文件超过 2000 个',
+  'unsafe-path': '压缩包里包含非法路径，已拒绝导入',
+  'outside-skill-root': '目标目录不在技能目录下，已拒绝写入',
+  'directory-exhausted': '同名技能太多，找不到可用目录名',
+  'body-too-large': '文件超过 24 MB',
+};
+
+function friendlyImportError(error) {
+  return IMPORT_ERROR_TEXT[error.code] || messageOf(error);
+}
+
+/* ------------------------------------------------------------------ */
 /* on-disk catalog                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -1420,10 +1727,13 @@ const SKILLS_ROOT = join(homedir(), '.dsh', 'skills');
 
 /** The text of a file's leading `---` frontmatter block, or ''. */
 function frontmatterText(content) {
-  if (!String(content).startsWith('---')) return '';
-  const end = content.indexOf('\n---', 3);
+  // Windows editors happily prepend a BOM; without this the leading `---` never
+  // matches and an imported skill silently loses its declared name.
+  const source = String(content).replace(/^\uFEFF/, '');
+  if (!source.startsWith('---')) return '';
+  const end = source.indexOf('\n---', 3);
   if (end < 0) return '';
-  return content.slice(3, end);
+  return source.slice(3, end);
 }
 
 /** Read one frontmatter scalar, inline or as a `|` / `>` block. */
