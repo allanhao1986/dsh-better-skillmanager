@@ -1,6 +1,6 @@
 {
   "name": "dsh-better-skillmanager",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Skills manager for DeepSeek Harness — list every installed skill with its official SkillHub name, uninstall it safely, and browse the market to install new ones. / 技能管理器：列出本机全部技能及其市场官方名称，安全卸载，并在市场里浏览安装。",
   "type": "module",
   "author": "Beishan",
