@@ -550,38 +550,6 @@ window.__ModuleLoader__.load({
   color: #fff;
   background: #dc2626;
 }
-.dsk-notice {
-  margin: 0 26px 12px;
-  padding: 9px 12px;
-  border-radius: 9px;
-  border: 1px solid rgba(34,160,107,0.35);
-  background: rgba(34,160,107,0.1);
-  color: var(--dsw-alias-state-success-primary, #22a06b);
-  font-size: 12.5px;
-  line-height: 1.55;
-}
-.dsk-confirm {
-  margin: 12px 0 0;
-  padding: 12px 14px;
-  border-radius: 10px;
-  border: 1px solid rgba(220,38,38,0.35);
-  background: rgba(220,38,38,0.06);
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-.dsk-confirm-text {
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--dsw-alias-label-primary, #1f2329);
-}
-.dsk-confirm-path {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11.5px;
-  color: var(--dsw-alias-label-secondary, #6b6f76);
-  word-break: break-all;
-}
-.dsk-confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .dsk-tabs {
   display: flex;
   gap: 2px;
@@ -679,7 +647,9 @@ window.__ModuleLoader__.load({
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
   gap: 12px;
-  padding: 0 26px;
+  /* 12px matches .dsk-body's top inset, so the grid and the manager list start
+     on the same line under the tab strip. */
+  padding: 12px 26px 0;
 }
 .dsk-card {
   display: flex;
@@ -923,21 +893,6 @@ window.__ModuleLoader__.load({
   align-items: center;
   gap: 8px;
   margin-left: auto;
-}
-/* Uninstall confirmation: wraps onto its own full-width line inside the header. */
-.dsk-confirm-band {
-  flex: 1 1 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 2px;
-}
-.dsk-confirm-q {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 12.5px;
-  color: var(--dsw-alias-label-secondary, #6b6f76);
-  word-break: break-word;
 }
 .dsk-cta {
   appearance: none;
@@ -1536,10 +1491,10 @@ window.__ModuleLoader__.load({
         const [open, setOpen] = React.useState('');
         const [preview, setPreview] = React.useState({ status: 'idle', data: null, error: '' });
         const [installing, setInstalling] = React.useState('');
-        const [notice, setNotice] = React.useState(null);
+        // Result feedback is inline only: nothing pops over the panel.
+        const [failText, setFailText] = React.useState('');
         // Drawer-side management. Declared last so the hook order that the
         // render harnesses key on stays stable.
-        const [confirmRemove, setConfirmRemove] = React.useState(false);
         const [removing, setRemoving] = React.useState(false);
         const [removeError, setRemoveError] = React.useState('');
 
@@ -1622,15 +1577,8 @@ window.__ModuleLoader__.load({
         }, [open]);
 
         React.useEffect(() => {
-          if (!notice) return undefined;
-          const timer = setTimeout(() => setNotice(null), 6000);
-          return () => clearTimeout(timer);
-        }, [notice]);
-
-        React.useEffect(() => {
           // A different skill in the drawer must not inherit the previous
           // one's pending confirmation.
-          setConfirmRemove(false);
           setRemoving(false);
           setRemoveError('');
         }, [open]);
@@ -1658,7 +1606,7 @@ window.__ModuleLoader__.load({
         async function install(card) {
           if (installing) return;
           setInstalling(card.slug);
-          setNotice(null);
+          setFailText('');
           try {
             const body = await postJson(ROUTE + '/install', {
               slug: card.slug,
@@ -1666,21 +1614,11 @@ window.__ModuleLoader__.load({
                 ? '@' + card.namespaceHandle
                 : String(card.namespace || '').split('/')[0],
             });
-            setNotice({
-              kind: 'ok',
-              text: t(
-                'Installed ' + (body.name || card.name) + '.',
-                '已安装「' + (body.name || card.name) + '」。',
-              ),
-            });
             setTick((value) => value + 1);
             setOpen(null);
             if (props.onInstalled) props.onInstalled();
           } catch (error) {
-            setNotice({
-              kind: 'error',
-              text: t('Install failed: ', '安装失败：') + String(error.message || error),
-            });
+            setFailText(t('Install failed: ', '安装失败：') + String(error.message || error));
           } finally {
             setInstalling('');
           }
@@ -1693,28 +1631,8 @@ window.__ModuleLoader__.load({
           setRemoveError('');
           try {
             const body = await postJson(ROUTE + '/uninstall', { name: record.name, dir: record.dir });
-            setConfirmRemove(false);
-            setOpen(null);
+              setOpen(null);
             setTick((value) => value + 1);
-            if (body.leftover) {
-              setNotice({
-                kind: 'error',
-                text: t(
-                  'Removed ' + record.dir + ' from the registry, but its files are still on disk.',
-                  '已从注册表移除 ' + record.dir + '，但文件还在磁盘上。',
-                ),
-              });
-            } else if (body.stillRegistered) {
-              setNotice({
-                kind: 'ok',
-                text: t(
-                  'Deleted ' + record.dir + ' from disk. It stays listed until DSH restarts.',
-                  '已从磁盘删除 ' + record.dir + '，重启 DSH 后从列表消失。',
-                ),
-              });
-            } else {
-              setNotice({ kind: 'ok', text: t('Uninstalled ' + record.dir + '.', '已卸载 ' + record.dir + '。') });
-            }
             if (props.onInstalled) props.onInstalled();
           } catch (error) {
             setRemoveError(String(error.message || error));
@@ -2053,7 +1971,7 @@ window.__ModuleLoader__.load({
                   h(
                     'div',
                     { className: 'dsk-modal-actions' },
-                    !previewReady || confirmRemove
+                    !previewReady
                       ? null
                       : modalTarget.installed
                         ? [
@@ -2079,10 +1997,9 @@ window.__ModuleLoader__.load({
                                     key: 'remove',
                                     className: 'dsk-cta dsk-cta-outline-danger',
                                     type: 'button',
-                                    onClick: () => {
-                                      setRemoveError('');
-                                      setConfirmRemove(true);
-                                    },
+                                    // Immediate: no confirmation band,
+                                    // matching the manager pane.
+                                    onClick: () => uninstallFromDrawer(),
                                   },
                                   t('Uninstall', '卸载'),
                                 )
@@ -2106,43 +2023,6 @@ window.__ModuleLoader__.load({
                     { className: 'dsk-modal-close', type: 'button', onClick: () => setOpen(null) },
                     '×',
                   ),
-                  confirmRemove
-                    ? h(
-                        'div',
-                        { className: 'dsk-confirm-band' },
-                        h(
-                          'span',
-                          { className: 'dsk-confirm-q' },
-                          t(
-                            'Delete ' + (modalTarget.record ? modalTarget.record.dir : '') + ' from disk?',
-                            '确认从磁盘删除 ' + (modalTarget.record ? modalTarget.record.dir : '') + '？',
-                          ),
-                        ),
-                        h(
-                          'button',
-                          {
-                            className: 'dsk-cta dsk-cta-ghost',
-                            type: 'button',
-                            disabled: removing,
-                            onClick: () => {
-                              setRemoveError('');
-                              setConfirmRemove(false);
-                            },
-                          },
-                          t('Cancel', '取消'),
-                        ),
-                        h(
-                          'button',
-                          {
-                            className: 'dsk-cta dsk-cta-danger',
-                            type: 'button',
-                            disabled: removing,
-                            onClick: uninstallFromDrawer,
-                          },
-                          removing ? t('Uninstalling…', '卸载中…') : t('Confirm uninstall', '确认卸载'),
-                        ),
-                      )
-                    : null,
                   removeError
                     ? h('div', { className: 'dsk-actions-error', title: removeError }, removeError)
                     : null,
@@ -2212,41 +2092,19 @@ window.__ModuleLoader__.load({
           // switches underneath, then the results.
           h('div', { className: 'dsk-toolbar' }, search, categorySelect),
           h('div', { className: 'dsk-filterbar dsk-controls' }, sortTabs),
-          h(
-            'div',
-            { className: 'dsk-browse-meta' },
-            h(
-              'span',
-              null,
-              data
-                ? t(
-                    fmtCount(data.total, lang) + ' skills on skillhub.cn',
-                    'skillhub.cn 上共有 ' + fmtCount(data.total, lang) + ' 个技能',
-                  )
-                : t('Connecting to the skill market…', '正在连接技能市场…'),
-            ),
-            data && data.page > 1
-              ? h(
-                  'span',
-                  null,
-                  t(
-                    'page ' + data.page + ' of ' + totalPages,
-                    '第 ' + data.page + ' / ' + totalPages + ' 页',
-                  ),
-                )
-              : null,
-          ),
-          notice
+          data && data.page > 1
             ? h(
                 'div',
-                {
-                  className: 'dsk-notice',
-                  style: notice.kind === 'error' ? { borderColor: 'rgba(220,38,38,0.4)', background: 'rgba(220,38,38,0.08)', color: '#b91c1c' } : null,
-                },
-                notice.text,
+                { className: 'dsk-browse-meta' },
+                h(
+                  'span',
+                  null,
+                  t('page ' + data.page + ' of ' + totalPages, '第 ' + data.page + ' / ' + totalPages + ' 页'),
+                ),
               )
             : null,
           state.status === 'error' ? h('div', { className: 'dsk-error' }, state.error) : null,
+          failText ? h('div', { className: 'dsk-error' }, failText) : null,
           grid,
           pager,
           modal,
@@ -2273,22 +2131,14 @@ window.__ModuleLoader__.load({
         const [selected, setSelected] = React.useState('');
         const [detail, setDetail] = React.useState({ status: 'idle', name: '', content: '', error: '' });
         const [copied, setCopied] = React.useState('');
-        const [confirmRemove, setConfirmRemove] = React.useState(false);
         const [removing, setRemoving] = React.useState(false);
         const [removeError, setRemoveError] = React.useState('');
-        const [notice, setNotice] = React.useState('');
 
         React.useEffect(() => {
-          setConfirmRemove(false);
           setRemoving(false);
           setRemoveError('');
         }, [selected]);
 
-        React.useEffect(() => {
-          if (!notice) return undefined;
-          const timer = setTimeout(() => setNotice(''), 6000);
-          return () => clearTimeout(timer);
-        }, [notice]);
 
         React.useEffect(() => {
           let alive = true;
@@ -2394,25 +2244,7 @@ window.__ModuleLoader__.load({
           setRemoveError('');
           try {
             const body = await postJson(ROUTE + '/uninstall', { name: skill.name, dir: dir });
-            setConfirmRemove(false);
-            setSelected('');
-            if (body.leftover) {
-              setNotice(
-                t(
-                  'Removed ' + dir + ' from the registry, but its files are still on disk (probably in use).',
-                  '已从注册表移除 ' + dir + '，但文件还在磁盘上（可能被占用）。',
-                ),
-              );
-            } else if (body.stillRegistered) {
-              setNotice(
-                t(
-                  'Deleted ' + dir + ' from disk. It stays listed until DSH restarts.',
-                  '已从磁盘删除 ' + dir + '，本进程仍缓存着它，重启 DSH 后消失。',
-                ),
-              );
-            } else {
-              setNotice(t('Uninstalled ' + dir + '.', '已卸载 ' + dir + '。'));
-            }
+              setSelected('');
             reload();
           } catch (err) {
             setRemoveError(err && err.message ? err.message : String(err));
@@ -2686,59 +2518,14 @@ window.__ModuleLoader__.load({
                   className: 'dsk-btn dsk-btn-danger',
                   type: 'button',
                   disabled: removing,
-                  onClick: () => {
-                    setRemoveError('');
-                    setConfirmRemove(true);
-                  },
+                  // Immediate, like the drawer: the label already says
+                  // 卸载 and re-installing is one click.
+                  onClick: () => uninstall(current),
                   style: { flex: '0 0 auto', padding: '6px 12px', fontSize: 12.5 },
                 },
                 removing ? t('Uninstalling…', '卸载中…') : t('Uninstall', '卸载'),
               )
             : null;
-
-          const confirmBox =
-            confirmRemove && removable
-              ? h(
-                  'div',
-                  { className: 'dsk-confirm' },
-                  h(
-                    'div',
-                    { className: 'dsk-confirm-text' },
-                    t(
-                      'Delete this skill and its install directory? This cannot be undone.',
-                      '确认卸载吗？该技能的安装目录会从磁盘删除，不可撤销。',
-                    ),
-                  ),
-                  h('div', { className: 'dsk-confirm-path' }, current.dir || dir),
-                  removeError
-                    ? h('div', { className: 'dsk-error', style: { margin: 0 } }, removeError)
-                    : null,
-                  h(
-                    'div',
-                    { className: 'dsk-confirm-actions' },
-                    h(
-                      'button',
-                      {
-                        className: 'dsk-btn',
-                        type: 'button',
-                        disabled: removing,
-                        onClick: () => setConfirmRemove(false),
-                      },
-                      t('Cancel', '取消'),
-                    ),
-                    h(
-                      'button',
-                      {
-                        className: 'dsk-btn dsk-btn-danger',
-                        type: 'button',
-                        disabled: removing,
-                        onClick: () => uninstall(current),
-                      },
-                      removing ? t('Uninstalling…', '卸载中…') : t('Confirm', '确认卸载'),
-                    ),
-                  ),
-                )
-              : null;
 
           detailBody = h(
             'div',
@@ -2771,7 +2558,11 @@ window.__ModuleLoader__.load({
               ),
               actionButton,
             ),
-            confirmBox,
+            // Failures stay inline (no popup): the message sits under the
+            // title, where the eye already is after clicking uninstall.
+            removeError
+              ? h('div', { className: 'dsk-error', title: removeError }, removeError)
+              : null,
             // Always rendered: bundled and disk-only skills carry no market
             // tags, and without the row their intro sits higher than on a
             // tagged skill. They get their source chip instead.
@@ -2821,24 +2612,16 @@ window.__ModuleLoader__.load({
         const detailPane = h('section', { className: 'dsk-detail' }, detailBody);
 
         /* ---- footer ---- */
-        const foot = h(
-          'div',
-          { className: 'dsk-foot' },
+        // Only a status warning lives here; the "where names come from"
+        // explainer and the session-scope caveat were removed on request.
+        const footNote =
           state.data && state.data.marketReachable === false
             ? t(
                 'The skill market is unreachable, so official names are missing. Local names are shown instead.',
                 '技能市场暂时连不上，官方名称缺失，当前显示的是本地名称。',
               )
-            : t(
-                'Official names come from the skill market (api.skillhub.cn), matched by the slug in each install directory; built-in skills are not matched.',
-                '官方名称来自技能市场（api.skillhub.cn），按安装目录名里的 slug 匹配；内置技能不参与匹配。',
-              ),
-          h('br'),
-          t(
-            'Skills registered only by an agent preset are session-scoped and may not appear here.',
-            '仅挂在 agent 预设上的技能按会话作用域注册，可能不在此列表中。',
-          ),
-        );
+            : '';
+        const foot = footNote ? h('div', { className: 'dsk-foot' }, footNote) : null;
 
         const tabs = h(
           'div',
@@ -2875,7 +2658,6 @@ window.__ModuleLoader__.load({
           { className: 'dsk-manage' },
           toolbar,
           filterbar,
-          notice ? h('div', { className: 'dsk-notice' }, notice) : null,
           state.status === 'error' && state.error
             ? h('div', { className: 'dsk-error', style: { margin: '0 26px 14px' } }, state.error)
             : null,
