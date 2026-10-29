@@ -3,6 +3,13 @@
 
 # dsh-better-skillmanager
 
+> **这个插件从头到尾都是 DeepSeek Harness 做的** —— 设计、代码、调试、打包、发布全部在
+> DSH 会话里完成，作者只提需求。
+>
+> **Built end to end with DeepSeek Harness** — design, code, debugging, packaging
+> and release all happened inside a DSH session; the human only asked for the
+> feature.
+
 A local DSH bundle that puts a **Skills** entry in the left rail and opens a
 two-tab panel: **浏览技能 / Browse skills** and **技能管理 / Installed skills**.
 
@@ -33,10 +40,10 @@ the panel falls back to the native path rather than failing.
 
 ```bash
 # recommended: the packed release asset, nothing else needed
-dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.0.1/dsh-better-skillmanager-v1.0.1.tgz
+dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.0.2/dsh-better-skillmanager-v1.0.2.tgz
 
 # straight from the repository (needs git on the machine; pins the tag)
-dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.0.1
+dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.0.2
 
 # local checkout, for development
 dsh plugin --profile desktop add C:\path\to\dsh-better-skillmanager
