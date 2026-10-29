@@ -33,7 +33,7 @@ the panel falls back to the native path rather than failing.
 
 ```bash
 # recommended: the packed release asset, nothing else needed
-dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.0.1/dsh-better-skillmanager-1.0.1.tgz
+dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.0.1/dsh-better-skillmanager-v1.0.1.tgz
 
 # straight from the repository (needs git on the machine; pins the tag)
 dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.0.1
