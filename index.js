@@ -87,7 +87,7 @@ const marketCache = new Map();
 /** slug -> { at: number, type: string, body: Buffer | null } */
 const iconCache = new Map();
 
-export const inject = ['skills', 'webServer'];
+export const inject = ['skills', 'webServer', 'connection'];
 
 export function apply(ctx) {
   ctx.effect(() =>
@@ -101,7 +101,42 @@ export function apply(ctx) {
   );
 }
 
+/**
+ * Host admission for every route this plugin serves.
+ *
+ * `ctx.connection.requestRejection` is the same fence the harness puts in front
+ * of its own endpoints: it answers `undefined` for a trusted peer and a
+ * rejection record otherwise. A missing service counts as "no admission
+ * available" and is refused outright, so the routes can never be reached by an
+ * unauthenticated caller just because the connection plugin is not loaded.
+ */
+function admissionRejection(ctx, request) {
+  const connection = ctx.connection;
+  if (!connection || typeof connection.requestRejection !== 'function') {
+    return { code: 'admission-unavailable' };
+  }
+  try {
+    return connection.requestRejection(request) || null;
+  } catch (error) {
+    return { code: 'admission-failed', message: String((error && error.message) || error) };
+  }
+}
+
 async function handle(ctx, req, res) {
+  const rejection = admissionRejection(ctx, req);
+  if (rejection) {
+    sendJson(res, 403, {
+      ok: false,
+      error: 'forbidden',
+      message:
+        rejection.code === 'admission-unavailable'
+          ? 'this plugin refuses requests when the host connection admission is unavailable'
+          : 'the host connection admission rejected this request',
+      reason: rejection.code,
+    });
+    return;
+  }
+
   let sub = '/';
   let url;
   try {
