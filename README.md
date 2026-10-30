@@ -40,10 +40,10 @@ the panel falls back to the native path rather than failing.
 
 ```bash
 # recommended: the packed release asset, nothing else needed
-dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.1.1/dsh-better-skillmanager-v1.1.1.tgz
+dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.1.2/dsh-better-skillmanager-v1.1.2.tgz
 
 # straight from the repository (needs git on the machine; pins the tag)
-dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.1.1
+dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.1.2
 
 # local checkout, for development
 dsh plugin --profile desktop add C:\path\to\dsh-better-skillmanager
@@ -109,6 +109,13 @@ every card already says whether it is installed here.
 ## Routes
 
 All are same-origin and served by the harness web server.
+
+Every route sits behind the host's own admission fence: the handler calls
+`ctx.connection.requestRejection(req)` and answers `403 forbidden` unless that
+returns `undefined`, exactly like the harness's built-in endpoints. If the
+connection service is unavailable the plugin refuses every request instead of
+falling open (`reason: admission-unavailable`), so an anonymous caller cannot
+list, install, import or uninstall anything.
 
 - `GET /dsh-better-skillmanager/list` — skill summaries plus market matches. `?refresh=1`
   clears the market cache first.
