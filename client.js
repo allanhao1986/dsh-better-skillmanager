@@ -419,6 +419,47 @@ window.__ModuleLoader__.load({
   gap: 6px;
   margin-top: 12px;
 }
+.dsk-detail-titlerow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.dsk-placeholder {
+  margin: 24px 0;
+  color: var(--dsw-alias-label-secondary, #6b6f76);
+  font-size: 13px;
+}
+.dsk-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.dsk-tool-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.07);
+  min-width: 0;
+}
+.dsk-tool-name {
+  flex: 0 0 auto;
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary, #1f2329);
+}
+.dsk-tool-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #6b6f76);
+}
 .dsk-item-desc {
   font-size: 12px;
   line-height: 1.45;
@@ -2613,10 +2654,283 @@ window.__ModuleLoader__.load({
       return ImportDialog;
     }
 
+    /* ------------------------------------------------------------------ */
+    /* MCP servers                                                         */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Third tab: the MCP servers this process is configured to talk to, plus the
+     * tools each one actually announced. The host merges two sources — Loader
+     * rows (`@deepseek-ai/dsh-mcp-client`) for configuration, and the tool
+     * registry (`mcp__<server>__<tool>`) for runtime proof a server answered.
+     */
+    function buildMcp(ctx) {
+      // Some servers announce more than two hundred tools; the list is a
+      // readable summary, not a dump, so long inventories are clipped.
+      const TOOL_LIMIT = 120;
+
+      function statusLabel(t, status) {
+        if (status === 'connected') return t('Connected', '已连接');
+        if (status === 'disabled') return t('Disabled', '已停用');
+        return t('No tools', '无工具');
+      }
+
+      function McpPane(props) {
+        const t = props.t;
+        const [data, setData] = React.useState(null);
+        const [error, setError] = React.useState('');
+        const [busy, setBusy] = React.useState(true);
+        const [term, setTerm] = React.useState('');
+        const [picked, setPicked] = React.useState('');
+        const [nonce, setNonce] = React.useState(0);
+
+        React.useEffect(() => {
+          let alive = true;
+          setBusy(true);
+          setError('');
+          getJson(ROUTE + '/mcp')
+            .then((payload) => {
+              if (!alive) return;
+              setData(payload);
+              setBusy(false);
+            })
+            .catch((failure) => {
+              if (!alive) return;
+              setError(String((failure && failure.message) || failure));
+              setBusy(false);
+            });
+          return () => {
+            alive = false;
+          };
+        }, [nonce]);
+
+        const servers = (data && data.servers) || [];
+        const needle = String(term || '').trim().toLowerCase();
+        const visible = needle
+          ? servers.filter((row) =>
+              [row.name, row.command, row.url]
+                .concat((row.tools || []).map((tool) => tool.name))
+                .join(' ')
+                .toLowerCase()
+                .includes(needle),
+            )
+          : servers;
+        const current = visible.find((row) => row.name === picked) || visible[0] || null;
+
+        const search = h(
+          'form',
+          {
+            className: 'dsk-search',
+            onSubmit: (event) => {
+              if (event && event.preventDefault) event.preventDefault();
+            },
+          },
+          h(SearchGlyph, { size: 14 }),
+          h('input', {
+            type: 'search',
+            value: term,
+            placeholder: t('Search servers or tools by name', '按名称搜索服务器或工具'),
+            onChange: (event) => setTerm(event.target.value),
+          }),
+        );
+
+        const toolbar = h(
+          'div',
+          { className: 'dsk-toolbar' },
+          search,
+          h(
+            'button',
+            {
+              className: 'dsk-btn dsk-hbtn',
+              type: 'button',
+              onClick: () => setNonce(nonce + 1),
+              title: t('Read the MCP inventory again', '重新读取 MCP 清单'),
+            },
+            h(RefreshGlyph, { size: 14 }),
+            t('Reload', '重新读取'),
+          ),
+        );
+
+        const summary = data
+          ? h(
+              'div',
+              { className: 'dsk-browse-meta' },
+              t(
+                data.connected + ' connected · ' + data.total + ' configured · ' + data.toolCount + ' tools',
+                data.connected + ' 个已连接 · ' + data.total + ' 个已配置 · ' + data.toolCount + ' 个工具',
+              ),
+            )
+          : null;
+
+        const list = h(
+          'div',
+          { className: 'dsk-list', role: 'listbox' },
+          visible.map((row) =>
+            h(
+              'button',
+              {
+                key: row.name,
+                type: 'button',
+                className: 'dsk-item',
+                role: 'option',
+                'data-active': current && current.name === row.name ? 'true' : 'false',
+                onClick: () => setPicked(row.name),
+              },
+              h(
+                'span',
+                { className: 'dsk-item-main' },
+                h(
+                  'span',
+                  { className: 'dsk-item-titlerow' },
+                  h('span', { className: 'dsk-item-title' }, row.name),
+                  h(
+                    'span',
+                    {
+                      className: 'dsk-tag',
+                      'data-tone': row.status === 'connected' ? 'ok' : 'plain',
+                    },
+                    statusLabel(t, row.status),
+                  ),
+                ),
+                h('span', { className: 'dsk-meta' }, row.transport + ' · ' + row.toolCount + ' tools'),
+                h(
+                  'span',
+                  { className: 'dsk-item-desc' },
+                  row.command || row.url || t('no command recorded', '没有记录启动命令'),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        const toolRows = (current && current.tools) || [];
+        const shown = toolRows.slice(0, TOOL_LIMIT);
+        const rest = toolRows.length - shown.length;
+
+        const detail = current
+          ? h(
+              'div',
+              { className: 'dsk-detail' },
+              h(
+                'div',
+                { className: 'dsk-detail-top' },
+                h(
+                  'div',
+                  { className: 'dsk-grow' },
+                  h(
+                    'div',
+                    { className: 'dsk-detail-titlerow' },
+                    h('h2', { className: 'dsk-detail-h' }, current.name),
+                    h(
+                      'span',
+                      {
+                        className: 'dsk-tag',
+                        'data-tone': current.status === 'connected' ? 'ok' : 'plain',
+                      },
+                      statusLabel(t, current.status),
+                    ),
+                  ),
+                  h('p', { className: 'dsk-detail-slug' }, current.id || current.package),
+                ),
+              ),
+              h(
+                'div',
+                { className: 'dsk-tagrow' },
+                h('span', { className: 'dsk-tag dsk-tag-muted' }, current.transport || 'stdio'),
+                current.failOnStartup
+                  ? h('span', { className: 'dsk-tag' }, t('fails hard on startup', '启动失败即报错'))
+                  : null,
+              ),
+              h(
+                'dl',
+                { className: 'dsk-kv' },
+                [
+                  { label: t('Loader id', '配置 id'), value: current.id || '—' },
+                  { label: t('Command', '命令'), value: current.command || '—' },
+                  {
+                    label: t('Arguments', '参数'),
+                    value: current.args && current.args.length ? current.args.join(' ') : '—',
+                  },
+                  { label: t('URL', 'URL'), value: current.url || '—' },
+                  {
+                    label: t('Environment', '环境变量'),
+                    value: current.envKeys && current.envKeys.length ? current.envKeys.join(', ') : '—',
+                  },
+                  { label: t('Working dir', '工作目录'), value: current.cwd || '—' },
+                  { label: t('Tools', '工具数'), value: String(current.toolCount) },
+                ]
+                  .filter((row) => !!row.value)
+                  .map((row) =>
+                    h(
+                      'div',
+                      { key: row.label, style: { display: 'contents' } },
+                      h('dt', null, row.label),
+                      h('dd', { title: row.value }, row.value),
+                    ),
+                  ),
+              ),
+              h('h3', { className: 'dsk-sec' }, t('Tools', '工具')),
+              toolRows.length === 0
+                ? h(
+                    'p',
+                    { className: 'dsk-text' },
+                    t(
+                      'This server is configured but announced no tools — it may not have started, or it exposes only resources.',
+                      '这个服务器已配置但没有上报任何工具 —— 可能没启动成功，或者它只提供资源。',
+                    ),
+                  )
+                : h(
+                    'div',
+                    { className: 'dsk-tools' },
+                    shown.map((tool) =>
+                      h(
+                        'div',
+                        { className: 'dsk-tool-row', key: tool.name },
+                        h('code', { className: 'dsk-tool-name' }, tool.name),
+                        tool.description
+                          ? h('span', { className: 'dsk-tool-desc', title: tool.description }, tool.description)
+                          : null,
+                      ),
+                    ),
+                    rest > 0
+                      ? h(
+                          'p',
+                          { className: 'dsk-text' },
+                          t(rest + ' more tools not shown', '还有 ' + rest + ' 个工具未显示'),
+                        )
+                      : null,
+                  ),
+            )
+          : h(
+              'div',
+              { className: 'dsk-detail' },
+              h(
+                'p',
+                { className: 'dsk-placeholder' },
+                busy
+                  ? t('Reading the MCP inventory…', '正在读取 MCP 清单…')
+                  : t('No MCP server matches the search.', '没有匹配的 MCP 服务器。'),
+              ),
+            );
+
+        return h(
+          'div',
+          { className: 'dsk-manage' },
+          toolbar,
+          summary,
+          error ? h('div', { className: 'dsk-error', style: { margin: '0 26px 14px' } }, error) : null,
+          h('div', { className: 'dsk-body' }, list, detail),
+        );
+      }
+
+      return McpPane;
+    }
+
     function buildPage(ctx) {
       // Built once: a component type created during render would remount the
       // browse pane on every parent render and throw away its paging state.
       const BrowsePane = buildBrowse(ctx);
+      const McpPane = buildMcp(ctx);
       const ImportDialog = buildImport(ctx);
 
       return function SkillsPage() {
@@ -2785,7 +3099,9 @@ window.__ModuleLoader__.load({
             h(
               'p',
               { className: 'dsk-sub' },
-              view === 'browse'
+              view === 'mcp'
+                ? t('MCP servers this process can reach, and the tools each one announced', '本进程可用的 MCP 服务器，以及每个服务器上报的工具')
+                : view === 'browse'
                 ? t(
                     'Search the skill market, preview a skill and install it in one click',
                     '搜索技能市场，预览详情并一键安装',
@@ -2800,23 +3116,29 @@ window.__ModuleLoader__.load({
                     : t('No skill found', '没有找到技能'),
             ),
           ),
-          h(
-            'button',
-            {
-              className: 'dsk-btn dsk-hbtn',
-              type: 'button',
-              title: t('Import a skill from this computer', '从本机导入技能'),
-              onClick: () => setImportOpen(true),
-            },
-            h(ImportGlyph, { size: 14 }),
-            t('Import', '导入'),
-          ),
-          h(
-            'button',
-            { className: 'dsk-btn dsk-hbtn', type: 'button', onClick: reload, disabled: busy },
-            h(RefreshGlyph, { size: 14 }),
-            busy ? t('Refreshing…', '刷新中…') : t('Refresh', '刷新'),
-          ),
+          // The MCP tab owns its own reload and has nothing to import; showing
+          // skill actions there would act on the wrong list.
+          view === 'mcp'
+            ? null
+            : h(
+                'button',
+                {
+                  className: 'dsk-btn dsk-hbtn',
+                  type: 'button',
+                  title: t('Import a skill from this computer', '从本机导入技能'),
+                  onClick: () => setImportOpen(true),
+                },
+                h(ImportGlyph, { size: 14 }),
+                t('Import', '导入'),
+              ),
+          view === 'mcp'
+            ? null
+            : h(
+                'button',
+                { className: 'dsk-btn dsk-hbtn', type: 'button', onClick: reload, disabled: busy },
+                h(RefreshGlyph, { size: 14 }),
+                busy ? t('Refreshing…', '刷新中…') : t('Refresh', '刷新'),
+              ),
         );
 
         /* ---- toolbar ---- */
@@ -3226,6 +3548,18 @@ window.__ModuleLoader__.load({
             t('Installed skills', '技能管理'),
             skills.length ? h('span', { className: 'dsk-tab-count' }, String(skills.length)) : null,
           ),
+          h(
+            'button',
+            {
+              className: 'dsk-tab',
+              type: 'button',
+              role: 'tab',
+              'data-on': view === 'mcp' ? 'true' : 'false',
+              'aria-selected': view === 'mcp' ? 'true' : 'false',
+              onClick: () => setView('mcp'),
+            },
+            'MCP',
+          ),
         );
 
         const managePane = h(
@@ -3248,6 +3582,8 @@ window.__ModuleLoader__.load({
           tabs,
           view === 'manage'
             ? managePane
+            : view === 'mcp'
+            ? h(McpPane, { t: t })
             : h(BrowsePane, {
                 t: t,
                 lang: lang,
