@@ -40,10 +40,10 @@ the panel falls back to the native path rather than failing.
 
 ```bash
 # recommended: the packed release asset, nothing else needed
-dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.3.0/dsh-better-skillmanager-v1.3.0.tgz
+dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.3.1/dsh-better-skillmanager-v1.3.1.tgz
 
 # straight from the repository (needs git on the machine; pins the tag)
-dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.3.0
+dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.3.1
 
 # local checkout, for development
 dsh plugin --profile desktop add C:\path\to\dsh-better-skillmanager
@@ -342,9 +342,29 @@ inventory, and printing secrets into a panel would be a regression, not a
 feature. Tool inventories longer than 120 entries are clipped with a count of
 what was omitted.
 
-The tab is read-only on purpose. Changing MCP configuration means editing the
-profile's loader patch and restarting, which is a different (and riskier) kind
-of edit than toggling a skill directory.
+### Enabling, disabling and removing a server
+
+Every row the Loader owns can be switched without touching a file:
+
+- **Enable / disable** calls `pluginManager.setPluginEnabled(entryId, enabled)`,
+  which is the harness' own switch. It persists into the profile, applies
+  immediately (`application: "applied"` in the response) and is fully
+  reversible — the row stays configured, it simply stops loading.
+- `GET /dsh-better-skillmanager/mcp` therefore reports `entryId`, `enabled`,
+  `phase` and `removable` per server, next to the configured fields.
+- **Remove** (`POST /dsh-better-skillmanager/mcp-remove`, `{ id }`) deletes that
+  row's block from the profile's `cordis.patch.yml`. The block runs from its
+  `- id:` line to the next row at the same indent, so nested `config:` keys go
+  with it; the original file is copied to `cordis.patch.yml.bak-<timestamp>`
+  first, and the write is abandoned with `409 unsafe-row` if the row's shape
+  does not look like a single MCP entry or if the id survives the edit.
+  Pass `{"id": "...", "dryRun": true}` to see how many lines would be removed
+  without writing anything.
+- Rows that only appear in the tool registry (no Loader row this process can
+  edit) render without the switch or the remove button.
+
+The tab is otherwise read-only: it never invents configuration, and environment
+values are still never returned.
 
 ## Author
 
