@@ -42,6 +42,9 @@ const MARKET_CONCURRENCY = 4;
 
 /** The skill-market bundle owns install/uninstall; this is its route prefix. */
 const MARKET_ROUTE = '/skill-market/api';
+
+/** Loader row name of the MCP client plugin, the source of configured servers. */
+const MCP_PACKAGE = '@deepseek-ai/dsh-mcp-client';
 const UNINSTALL_TIMEOUT = 15000;
 const BODY_LIMIT = 64 * 1024;
 
@@ -182,6 +185,10 @@ async function handle(ctx, req, res) {
     }
     if (sub === '/toggle' || sub === '/toggle/') {
       await sendToggle(ctx, req, res);
+      return;
+    }
+    if (sub === '/mcp' || sub === '/mcp/') {
+      sendMcp(ctx, res);
       return;
     }
     if (sub === '/import' || sub === '/import/') {
@@ -687,6 +694,123 @@ async function sendUninstall(ctx, req, res) {
  * edits on disk. The move is atomic per file and trivially reversible, which is
  * the whole point: no deletion, no reinstall, no loss of content.
  */
+/**
+ * MCP inventory: what this process is configured to talk to, and what those
+ * servers actually announced.
+ *
+ * Configured servers are Loader rows (`@deepseek-ai/dsh-mcp-client`), which the
+ * config editor can list; the tools they expose arrive in the tool registry as
+ * `mcp__<server>__<tool>`, which is the only runtime proof a server answered.
+ * Env *values* are deliberately not returned — only the key names — because the
+ * panel is a read-only view.
+ */
+function mcpInventory(ctx) {
+  const servers = new Map();
+
+  let entries = [];
+  const editor = ctx.get('configEditor');
+  try {
+    if (editor && typeof editor.entries === 'function') entries = editor.entries() || [];
+  } catch {
+    entries = [];
+  }
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') continue;
+    // Loader entries carry their own id/name/config on `options`; the fiber
+    // fields on the entry itself throw when serialized.
+    const options = entry.options && typeof entry.options === 'object' ? entry.options : {};
+    const config = options.config && typeof options.config === 'object' ? options.config : {};
+    const isMcp =
+      String(options.name || '') === MCP_PACKAGE ||
+      config.serverName !== undefined ||
+      config.transport !== undefined;
+    if (!isMcp) continue;
+
+    const name = text(config.serverName) || text(options.id) || '(unnamed)';
+    const env = config.env && typeof config.env === 'object' ? Object.keys(config.env) : [];
+    servers.set(name, {
+      name,
+      id: text(options.id),
+      package: text(options.name),
+      transport: text(config.transport) || 'stdio',
+      command: text(config.command),
+      args: Array.isArray(config.args) ? config.args.map(String) : [],
+      url: text(config.url),
+      envKeys: env.sort(),
+      cwd: text(config.cwd),
+      failOnStartup: config.failOnStartupError === true,
+      disabled: options.disabled === true,
+      tools: [],
+      source: 'config',
+    });
+  }
+
+  let schemas = [];
+  const tools = ctx.get('tools');
+  try {
+    if (tools && typeof tools.schemas === 'function') schemas = tools.schemas() || [];
+  } catch {
+    schemas = [];
+  }
+
+  for (const schema of schemas) {
+    const name = text(schema && (schema.name || schema.function?.name));
+    if (!name.startsWith('mcp__')) continue;
+    const parts = name.split('__');
+    if (parts.length < 3) continue;
+    const server = parts[1];
+    const tool = parts.slice(2).join('__');
+    const record = servers.get(server) || {
+      name: server,
+      id: '',
+      package: MCP_PACKAGE,
+      transport: 'unknown',
+      command: '',
+      args: [],
+      url: '',
+      envKeys: [],
+      cwd: '',
+      failOnStartup: false,
+      disabled: false,
+      tools: [],
+      source: 'tools',
+    };
+    record.tools.push({
+      name: tool,
+      description: text(schema && (schema.description || schema.function?.description)),
+    });
+    servers.set(server, record);
+  }
+
+  const rows = [...servers.values()].map((row) => ({
+    ...row,
+    tools: row.tools.sort((a, b) => a.name.localeCompare(b.name)),
+    toolCount: row.tools.length,
+    status: row.disabled ? 'disabled' : row.tools.length ? 'connected' : 'idle',
+  }));
+  rows.sort((a, b) => a.name.localeCompare(b.name));
+  return rows;
+}
+
+function sendMcp(ctx, res) {
+  let servers;
+  try {
+    servers = mcpInventory(ctx);
+  } catch (error) {
+    sendJson(res, 500, { ok: false, error: 'mcp-inventory-failed', message: messageOf(error) });
+    return;
+  }
+  sendJson(res, 200, {
+    ok: true,
+    total: servers.length,
+    connected: servers.filter((row) => row.status === 'connected').length,
+    toolCount: servers.reduce((sum, row) => sum + row.toolCount, 0),
+    fetchedAt: new Date().toISOString(),
+    servers,
+  });
+}
+
 async function sendToggle(ctx, req, res) {
   const contentType = String(req.headers['content-type'] || '').toLowerCase();
   if (contentType.indexOf('application/json') < 0) {
