@@ -40,10 +40,10 @@ the panel falls back to the native path rather than failing.
 
 ```bash
 # recommended: the packed release asset, nothing else needed
-dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.1.3/dsh-better-skillmanager-v1.1.3.tgz
+dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.2.0/dsh-better-skillmanager-v1.2.0.tgz
 
 # straight from the repository (needs git on the machine; pins the tag)
-dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.1.3
+dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.2.0
 
 # local checkout, for development
 dsh plugin --profile desktop add C:\path\to\dsh-better-skillmanager
@@ -143,6 +143,8 @@ list, install, import or uninstall anything.
   handle (`@ake`), not the canonical `@ake/dev-god`, which the API rejects.
 - `POST /dsh-better-skillmanager/install` `{ slug, namespace }` — install one market skill.
 - `POST /dsh-better-skillmanager/uninstall` `{ name, dir }` — uninstall one skill.
+- `POST /dsh-better-skillmanager/toggle` `{ name, dir, enabled }` — switch one skill on
+  or off without deleting it (see [Enable / disable](#enable--disable)).
 
 
 > The CTA palette (#2b6cb0 primary, #dc2626 danger) is hard-coded rather than
@@ -235,6 +237,33 @@ ledger.
 
 Deleting the directory directly would leave the panel listing a skill whose
 files are gone, which is why the market plugin stays in the loop.
+
+## Enable / disable
+
+Every skill that the panel can manage carries a switch next to **卸载** in its
+detail pane. Switching it off does **not** delete anything: the skill's
+`SKILL.md` is renamed to `SKILL.md.disabled`, which is the one thing every skill
+provider looks for. The directory, its files and any support material stay
+where they are, the row stays in the list (greyed, tagged 已停用), and switching
+it back on restores the original name.
+
+Why the rename rather than a config flag: skills are discovered from the file
+system, so the only state a *new* session can honour is what is on disk. Parking
+the manifest is therefore exactly "don't load this skill", and it is reversible
+without a re-download.
+
+- `POST /toggle` `{ name, dir, enabled }` — the only write. Same guards as
+  `/uninstall` (JSON body, `enabled` must be a boolean → `400 bad-flag`,
+  registry `name` + `dir` pair, `403` for a built-in skill, `409` on a directory
+  mismatch, `403` outside the skill roots, `404` when the directory is gone).
+- The response reports the file now in place: `{ enabled: true, file: "SKILL.md" }`
+  or `{ enabled: false, file: "SKILL.md.disabled" }`.
+- `/list` reports `enabled` and `togglable` per skill. `togglable` is false for
+  built-in skills (they ship inside the harness and must not be parked) — the
+  detail pane hides the switch for them instead of showing one that would fail.
+- A disabled skill is still listed: `scanDisk` reads `SKILL.md.disabled` when the
+  active manifest is missing. Without that it would vanish from the panel and
+  could never be switched back on.
 
 ## Local import
 
