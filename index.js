@@ -28,7 +28,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -188,7 +188,15 @@ async function handle(ctx, req, res) {
       return;
     }
     if (sub === '/mcp' || sub === '/mcp/') {
-      sendMcp(ctx, res);
+      await sendMcp(ctx, res);
+      return;
+    }
+    if (sub === '/mcp-toggle' || sub === '/mcp-toggle/') {
+      await sendMcpToggle(ctx, req, res);
+      return;
+    }
+    if (sub === '/mcp-remove' || sub === '/mcp-remove/') {
+      await sendMcpRemove(ctx, req, res);
       return;
     }
     if (sub === '/import' || sub === '/import/') {
@@ -704,7 +712,7 @@ async function sendUninstall(ctx, req, res) {
  * Env *values* are deliberately not returned — only the key names — because the
  * panel is a read-only view.
  */
-function mcpInventory(ctx) {
+async function mcpInventory(ctx) {
   const servers = new Map();
 
   let entries = [];
@@ -789,14 +797,37 @@ function mcpInventory(ctx) {
     toolCount: row.tools.length,
     status: row.disabled ? 'disabled' : row.tools.length ? 'connected' : 'idle',
   }));
+  // pluginManager owns the live enablement and the entry ids that can be
+  // switched; configEditor alone only says what the profile declares.
+  const manager = ctx.get('pluginManager');
+  let plugins = [];
+  try {
+    if (manager && typeof manager.listPlugins === 'function') plugins = (await manager.listPlugins()) || [];
+  } catch {
+    plugins = [];
+  }
+  const byPatch = new Map();
+  for (const info of plugins) {
+    const patch = text(info && info.patchId);
+    if (patch) byPatch.set(patch, info);
+  }
+  for (const row of rows) {
+    const hit = byPatch.get(row.id);
+    row.entryId = hit ? String(hit.entryId || '') : '';
+    row.enabled = hit ? hit.enabled !== false : !row.disabled;
+    row.phase = hit ? text(hit.fiberPhase) || null : null;
+    row.removable = !!hit && !!row.id;
+    row.status = row.enabled ? (row.tools.length ? 'connected' : 'idle') : 'disabled';
+  }
+
   rows.sort((a, b) => a.name.localeCompare(b.name));
   return rows;
 }
 
-function sendMcp(ctx, res) {
+async function sendMcp(ctx, res) {
   let servers;
   try {
-    servers = mcpInventory(ctx);
+    servers = await mcpInventory(ctx);
   } catch (error) {
     sendJson(res, 500, { ok: false, error: 'mcp-inventory-failed', message: messageOf(error) });
     return;
@@ -808,6 +839,226 @@ function sendMcp(ctx, res) {
     toolCount: servers.reduce((sum, row) => sum + row.toolCount, 0),
     fetchedAt: new Date().toISOString(),
     servers,
+  });
+}
+
+/** Resolve one MCP row to the Loader entry that can actually be switched. */
+async function mcpEntryFor(ctx, id) {
+  const manager = ctx.get('pluginManager');
+  if (!manager || typeof manager.listPlugins !== 'function') return { error: 'plugin-manager-unavailable' };
+  let plugins = [];
+  try {
+    plugins = (await manager.listPlugins()) || [];
+  } catch (error) {
+    return { error: 'list-plugins-failed', message: messageOf(error) };
+  }
+  const hit = plugins.find(
+    (info) => String((info && info.patchId) || '') === id || String((info && info.entryId) || '') === id,
+  );
+  if (!hit) return { error: 'not-found' };
+  if (String(hit.moduleName || '') !== MCP_PACKAGE) return { error: 'not-an-mcp-row' };
+  return { manager, entry: hit };
+}
+
+/** Escape a literal string for use inside a RegExp. */
+function reEscape(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Where the profile declares this row, so it can be removed from the patch. */
+function findPatchFile(id) {
+  const root = join(homedir(), '.dsh', 'profiles');
+  let profileNames = [];
+  try {
+    profileNames = readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return null;
+  }
+  const rowPattern = new RegExp('^\\s*-\\s+id:\\s*["\']?' + reEscape(id) + '["\']?\\s*$', 'm');
+  for (const name of profileNames) {
+    const file = join(root, name, 'cordis.patch.yml');
+    if (!existsSync(file)) continue;
+    let content;
+    try {
+      content = readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    if (rowPattern.test(content) && content.includes(MCP_PACKAGE)) return { file, content };
+  }
+  return null;
+}
+
+/**
+ * Remove one row block from the profile patch.
+ *
+ * The block runs from its `- id:` line to the next row at the same indent, or
+ * to any shallower line, so nested `config:` keys stay with their own row. The
+ * original file is kept as a timestamped backup and the result is only written
+ * when the id count actually dropped.
+ */
+function stripRow(content, id) {
+  const lines = content.split(/\r?\n/);
+  const startPattern = new RegExp('^(\\s*)-\\s+id:\\s*["\']?' + reEscape(id) + '["\']?\\s*$');
+  const start = lines.findIndex((line) => startPattern.test(line));
+  if (start < 0) return null;
+  const indent = startPattern.exec(lines[start])[1].length;
+  let end = start + 1;
+  while (end < lines.length) {
+    const line = lines[end];
+    const trimmed = line.trim();
+    const lineIndent = line.length - line.trimStart().length;
+    if (!trimmed) {
+      end += 1;
+      continue;
+    }
+    if (lineIndent < indent) break;
+    if (lineIndent === indent && trimmed.startsWith('- ')) break;
+    end += 1;
+  }
+  const removed = lines.slice(start, end);
+  if (!removed.join('\n').includes(MCP_PACKAGE)) return null;
+  const next = lines.slice(0, start).concat(lines.slice(end));
+  return { text: next.join('\n'), removedLines: removed.length };
+}
+
+async function sendMcpToggle(ctx, req, res) {
+  const contentType = String(req.headers['content-type'] || '').toLowerCase();
+  if (contentType.indexOf('application/json') < 0) {
+    sendJson(res, 415, { ok: false, error: 'expected-json' });
+    return;
+  }
+  let payload;
+  try {
+    payload = await readJson(req);
+  } catch (error) {
+    sendJson(res, 400, { ok: false, error: 'bad-body', message: messageOf(error) });
+    return;
+  }
+  if (typeof payload.enabled !== 'boolean') {
+    sendJson(res, 400, { ok: false, error: 'bad-flag', message: '需要 enabled: true | false' });
+    return;
+  }
+  const id = text(payload.id);
+  if (!id) {
+    sendJson(res, 400, { ok: false, error: 'missing-id', message: '需要 MCP 行的配置 id' });
+    return;
+  }
+
+  const found = await mcpEntryFor(ctx, id);
+  if (found.error) {
+    sendJson(res, found.error === 'not-found' ? 404 : found.error === 'not-an-mcp-row' ? 403 : 503, {
+      ok: false,
+      error: found.error,
+      message: found.message || '',
+    });
+    return;
+  }
+
+  try {
+    const result = await found.manager.setPluginEnabled(found.entry.entryId, payload.enabled);
+    sendJson(res, 200, {
+      ok: true,
+      id,
+      enabled: payload.enabled,
+      changed: !(result && result.changed === false),
+      application: (result && result.application) || 'unknown',
+      restartReason: (result && result.restartReason) || null,
+      warnings: (result && result.warnings) || [],
+    });
+  } catch (error) {
+    sendJson(res, 500, { ok: false, error: 'mcp-toggle-failed', message: messageOf(error) });
+  }
+}
+
+async function sendMcpRemove(ctx, req, res) {
+  const contentType = String(req.headers['content-type'] || '').toLowerCase();
+  if (contentType.indexOf('application/json') < 0) {
+    sendJson(res, 415, { ok: false, error: 'expected-json' });
+    return;
+  }
+  let payload;
+  try {
+    payload = await readJson(req);
+  } catch (error) {
+    sendJson(res, 400, { ok: false, error: 'bad-body', message: messageOf(error) });
+    return;
+  }
+  const id = text(payload.id);
+  if (!id) {
+    sendJson(res, 400, { ok: false, error: 'missing-id', message: '需要 MCP 行的配置 id' });
+    return;
+  }
+
+  const found = await mcpEntryFor(ctx, id);
+  if (found.error) {
+    sendJson(res, found.error === 'not-found' ? 404 : found.error === 'not-an-mcp-row' ? 403 : 503, {
+      ok: false,
+      error: found.error,
+      message: found.message || '',
+    });
+    return;
+  }
+
+  const located = findPatchFile(id);
+  if (!located) {
+    sendJson(res, 404, {
+      ok: false,
+      error: 'patch-row-not-found',
+      message: '在 profile 的 cordis.patch.yml 里没有找到这一行',
+    });
+    return;
+  }
+
+  const stripped = stripRow(located.content, id);
+  if (!stripped) {
+    sendJson(res, 409, {
+      ok: false,
+      error: 'unsafe-row',
+      message: '这一行的结构不符合预期，已放弃删除',
+    });
+    return;
+  }
+  const idPattern = new RegExp('"?\\b' + reEscape(id) + '\\b"?', 'g');
+  const before = (located.content.match(idPattern) || []).length;
+  const after = (stripped.text.match(idPattern) || []).length;
+  if (before - after < 1) {
+    sendJson(res, 409, { ok: false, error: 'unsafe-row', message: '删除后 id 仍然存在，已放弃' });
+    return;
+  }
+
+  if (payload.dryRun === true) {
+    sendJson(res, 200, {
+      ok: true,
+      dryRun: true,
+      id,
+      file: located.file,
+      removedLines: stripped.removedLines,
+      bytesBefore: located.content.length,
+      bytesAfter: stripped.text.length,
+      note: 'dry-run',
+    });
+    return;
+  }
+
+  const backup = located.file + '.bak-' + new Date().toISOString().replace(/[:.]/g, '-');
+  try {
+    writeFileSync(backup, located.content, 'utf8');
+    writeFileSync(located.file, stripped.text, 'utf8');
+  } catch (error) {
+    sendJson(res, 500, { ok: false, error: 'write-failed', message: messageOf(error) });
+    return;
+  }
+
+  sendJson(res, 200, {
+    ok: true,
+    id,
+    file: located.file,
+    backup,
+    removedLines: stripped.removedLines,
+    note: 'removed',
   });
 }
 
