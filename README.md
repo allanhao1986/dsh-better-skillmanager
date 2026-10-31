@@ -40,10 +40,10 @@ the panel falls back to the native path rather than failing.
 
 ```bash
 # recommended: the packed release asset, nothing else needed
-dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.2.0/dsh-better-skillmanager-v1.2.0.tgz
+dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.3.0/dsh-better-skillmanager-v1.3.0.tgz
 
 # straight from the repository (needs git on the machine; pins the tag)
-dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.2.0
+dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.3.0
 
 # local checkout, for development
 dsh plugin --profile desktop add C:\path\to\dsh-better-skillmanager
@@ -145,6 +145,8 @@ list, install, import or uninstall anything.
 - `POST /dsh-better-skillmanager/uninstall` `{ name, dir }` — uninstall one skill.
 - `POST /dsh-better-skillmanager/toggle` `{ name, dir, enabled }` — switch one skill on
   or off without deleting it (see [Enable / disable](#enable--disable)).
+- `GET /dsh-better-skillmanager/mcp` — the MCP servers this process is configured
+  with, plus the tools each one announced (see [MCP servers](#mcp-servers)).
 
 
 > The CTA palette (#2b6cb0 primary, #dc2626 danger) is hard-coded rather than
@@ -320,6 +322,29 @@ read and removed from the panel like any other.
    unrelated skills under the same slug, so a match would be misleading.
 5. Any failure leaves the panel fully usable with local names, plus a one-line
    warning that replaces the (normally empty) footer.
+
+## MCP servers
+
+The panel's third tab mirrors the manager pane and answers "what MCP servers can
+this process actually reach?". The host merges two independent sources:
+
+| Source | What it proves |
+| --- | --- |
+| Loader rows named `@deepseek-ai/dsh-mcp-client` (read through `ctx.configEditor.entries()`) | The server is **configured**: id, transport, command/args or url, working directory, `failOnStartupError`, and the **names** of its environment variables |
+| The tool registry, filtered to `mcp__<server>__<tool>` | The server **answered**: it announced these tools at startup |
+
+A server may be configured and still show no tools (it failed to start, or it
+only exposes resources) — that row is labelled `无工具 / No tools` rather than
+being hidden, because "configured but mute" is the interesting failure mode.
+
+Environment **values** are never returned, only key names: this is a read-only
+inventory, and printing secrets into a panel would be a regression, not a
+feature. Tool inventories longer than 120 entries are clipped with a count of
+what was omitted.
+
+The tab is read-only on purpose. Changing MCP configuration means editing the
+profile's loader patch and restarting, which is a different (and riskier) kind
+of edit than toggling a skill directory.
 
 ## Author
 
