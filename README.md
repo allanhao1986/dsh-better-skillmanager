@@ -40,10 +40,10 @@ the panel falls back to the native path rather than failing.
 
 ```bash
 # recommended: the packed release asset, nothing else needed
-dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.3.1/dsh-better-skillmanager-v1.3.1.tgz
+dsh plugin --profile desktop add https://github.com/allanhao1986/dsh-better-skillmanager/releases/download/v1.3.2/dsh-better-skillmanager-v1.3.2.tgz
 
 # straight from the repository (needs git on the machine; pins the tag)
-dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.3.1
+dsh plugin --profile desktop add github:allanhao1986/dsh-better-skillmanager#v1.3.2
 
 # local checkout, for development
 dsh plugin --profile desktop add C:\path\to\dsh-better-skillmanager
@@ -239,6 +239,22 @@ ledger.
 
 Deleting the directory directly would leave the panel listing a skill whose
 files are gone, which is why the market plugin stays in the loop.
+
+### Filtering the manager
+
+The filter row above the list answers "what will load in a new session?":
+
+| Tab | Shows |
+| --- | --- |
+| 全部 / All | every skill the panel knows about |
+| 已启用 / Enabled | skills whose `SKILL.md` is active |
+| 已停用 / Disabled | parked skills (`SKILL.md.disabled`) that can be switched back on |
+
+Next to the search box sits the same **market category** dropdown the
+storefront uses (`/categories`), so installed skills can be filtered by the
+category they were filed under on skillhub.cn. Skills the market does not know —
+hand-written directories, bundled skills — have no category and are only listed
+under "all categories".
 
 ## Enable / disable
 
