@@ -1,7 +1,7 @@
 {
   "name": "dsh-better-skillmanager",
-  "version": "1.2.0",
-  "description": "Skills manager for DeepSeek Harness — list every installed skill with its official SkillHub name, uninstall it safely, and browse the market to install new ones. / 技能管理器：列出本机全部技能及其市场官方名称，安全卸载，并在市场里浏览安装。",
+  "version": "1.3.0",
+  "description": "Skills and MCP manager for DeepSeek Harness — list every installed skill with its official SkillHub name, switch it on or off, uninstall it safely, browse the market to install new ones, and inspect the MCP servers this process can reach. / 技能与 MCP 管理器：列出本机全部技能及其市场官方名称，可随时启用/停用、安全卸载，在市场里浏览安装，并查看本进程可用的 MCP 服务器。",
   "type": "module",
   "author": "Beishan",
   "license": "MIT",
