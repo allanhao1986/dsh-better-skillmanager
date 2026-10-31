@@ -3027,6 +3027,24 @@ window.__ModuleLoader__.load({
         const [hardRefresh, setHardRefresh] = React.useState(false);
         const [query, setQuery] = React.useState('');
         const [filter, setFilter] = React.useState('all');
+        const [category, setCategory] = React.useState('');
+        const [categories, setCategories] = React.useState([]);
+
+        // Same taxonomy the storefront uses, so a skill installed from the
+        // market keeps the category it was filed under there.
+        React.useEffect(() => {
+          let alive = true;
+          getJson(ROUTE + '/categories')
+            .then((body) => {
+              if (alive) setCategories((body && body.categories) || []);
+            })
+            .catch(() => {
+              if (alive) setCategories([]);
+            });
+          return () => {
+            alive = false;
+          };
+        }, []);
         const [selected, setSelected] = React.useState('');
         const [detail, setDetail] = React.useState({ status: 'idle', name: '', content: '', error: '' });
         const [copied, setCopied] = React.useState('');
@@ -3092,10 +3110,13 @@ window.__ModuleLoader__.load({
           // A row without a market block (older payload, disk-only skill) must
           // never take the whole panel down.
           const market = skill.market || { found: false };
-          if (filter === 'market' && !market.found) return false;
-          if (filter === 'local' && (market.found || skill.source === 'bundled')) return false;
-          if (filter === 'bundled' && skill.source !== 'bundled') return false;
-          if (filter === 'manual' && skill.invocation.modelInvocable) return false;
+          // Filters answer "will this load in a new session?", which is the
+          // question the switch above each skill is about.
+          if (filter === 'enabled' && skill.enabled === false) return false;
+          if (filter === 'disabled' && skill.enabled !== false) return false;
+          // The category dropdown is the same market taxonomy the storefront
+          // uses; skills the market doesn't know stay under "all categories".
+          if (category && String(market.category || '') !== category) return false;
           if (!needle) return true;
           const haystack = [
             skill.title,
@@ -3226,11 +3247,30 @@ window.__ModuleLoader__.load({
         /* ---- toolbar ---- */
         const chips = [
           { id: 'all', label: t('All', '全部') },
-          { id: 'market', label: t('On market', '市场已收录') },
-          { id: 'local', label: t('Local only', '本地自研') },
-          { id: 'bundled', label: t('Built-in', '内置') },
-          { id: 'manual', label: t('Manual only', '仅手动') },
+          { id: 'enabled', label: t('Enabled', '已启用') },
+          { id: 'disabled', label: t('Disabled', '已停用') },
         ];
+
+        const categorySelect = h(
+          'label',
+          { className: 'dsk-sort' },
+          h(
+            'select',
+            {
+              value: category,
+              onChange: (event) => setCategory(event.target.value),
+              'aria-label': t('Filter by market category', '按市场分类筛选'),
+            },
+            h('option', { key: 'all', value: '' }, t('All categories', '所有分类')),
+            categories.map((item) =>
+              h(
+                'option',
+                { key: item.key, value: item.key },
+                lang === 'en' ? item.nameEn || item.name : item.name,
+              ),
+            ),
+          ),
+        );
 
         const toolbar = h(
           'div',
@@ -3247,6 +3287,7 @@ window.__ModuleLoader__.load({
               'aria-label': t('Search skills', '搜索技能'),
             }),
           ),
+          categorySelect,
         );
 
         const filterbar = h(
