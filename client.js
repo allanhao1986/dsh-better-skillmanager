@@ -2683,6 +2683,8 @@ window.__ModuleLoader__.load({
         const [term, setTerm] = React.useState('');
         const [picked, setPicked] = React.useState('');
         const [nonce, setNonce] = React.useState(0);
+        const [mcpBusy, setMcpBusy] = React.useState(false);
+        const [mcpError, setMcpError] = React.useState('');
 
         React.useEffect(() => {
           let alive = true;
@@ -2703,6 +2705,35 @@ window.__ModuleLoader__.load({
             alive = false;
           };
         }, [nonce]);
+
+        async function mcpToggle(row, next) {
+          if (!row || !row.id) return;
+          setMcpBusy(true);
+          setMcpError('');
+          try {
+            await postJson(ROUTE + '/mcp-toggle', { id: row.id, enabled: next });
+            setNonce((value) => value + 1);
+          } catch (failure) {
+            setMcpError(String((failure && failure.message) || failure));
+          } finally {
+            setMcpBusy(false);
+          }
+        }
+
+        async function mcpRemove(row) {
+          if (!row || !row.id) return;
+          setMcpBusy(true);
+          setMcpError('');
+          try {
+            await postJson(ROUTE + '/mcp-remove', { id: row.id });
+            setPicked('');
+            setNonce((value) => value + 1);
+          } catch (failure) {
+            setMcpError(String((failure && failure.message) || failure));
+          } finally {
+            setMcpBusy(false);
+          }
+        }
 
         const servers = (data && data.servers) || [];
         const needle = String(term || '').trim().toLowerCase();
@@ -2832,7 +2863,58 @@ window.__ModuleLoader__.load({
                   ),
                   h('p', { className: 'dsk-detail-slug' }, current.id || current.package),
                 ),
+                current.removable
+                  ? h(
+                      'button',
+                      {
+                        className: 'dsk-switch',
+                        type: 'button',
+                        role: 'switch',
+                        'aria-checked': current.enabled ? 'true' : 'false',
+                        'data-on': current.enabled ? 'true' : 'false',
+                        disabled: mcpBusy,
+                        title: t(
+                          'Whether this MCP server starts with the harness',
+                          '这个 MCP 服务器会不会随 harness 启动',
+                        ),
+                        onClick: () => mcpToggle(current, !current.enabled),
+                      },
+                      h(
+                        'span',
+                        { className: 'dsk-switch-track' },
+                        h('span', { className: 'dsk-switch-knob' }),
+                      ),
+                      h(
+                        'span',
+                        { className: 'dsk-switch-label' },
+                        mcpBusy
+                          ? t('Saving…', '保存中…')
+                          : current.enabled
+                          ? t('Enabled', '已启用')
+                          : t('Disabled', '已停用'),
+                      ),
+                    )
+                  : null,
+                current.removable
+                  ? h(
+                      'button',
+                      {
+                        className: 'dsk-btn dsk-btn-danger',
+                        type: 'button',
+                        disabled: mcpBusy,
+                        title: t(
+                          'Remove this row from the profile (a backup is written first)',
+                          '从 profile 配置里删掉这一行（会先写备份）',
+                        ),
+                        onClick: () => mcpRemove(current),
+                      },
+                      t('Remove', '卸载'),
+                    )
+                  : null,
               ),
+              mcpError
+                ? h('div', { className: 'dsk-error', title: mcpError }, mcpError)
+                : null,
               h(
                 'div',
                 { className: 'dsk-tagrow' },
