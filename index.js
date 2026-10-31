@@ -180,6 +180,10 @@ async function handle(ctx, req, res) {
       await sendUninstall(ctx, req, res);
       return;
     }
+    if (sub === '/toggle' || sub === '/toggle/') {
+      await sendToggle(ctx, req, res);
+      return;
+    }
     if (sub === '/import' || sub === '/import/') {
       await sendImport(ctx, req, res);
       return;
@@ -667,6 +671,143 @@ async function sendUninstall(ctx, req, res) {
     leftover,
     stillRegistered: leftover ? false : stillRegistered,
     market: marketUninstall,
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* enable / disable without uninstalling                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Park or restore `SKILL.md` inside one skill directory.
+ *
+ * Skill providers register a directory only when it carries `SKILL.md`, so
+ * renaming that single file to `SKILL.md.disabled` removes the skill from every
+ * new session's catalog while keeping the folder, its references and any local
+ * edits on disk. The move is atomic per file and trivially reversible, which is
+ * the whole point: no deletion, no reinstall, no loss of content.
+ */
+async function sendToggle(ctx, req, res) {
+  const contentType = String(req.headers['content-type'] || '').toLowerCase();
+  if (contentType.indexOf('application/json') < 0) {
+    sendJson(res, 415, { ok: false, error: 'expected-json' });
+    return;
+  }
+
+  let payload;
+  try {
+    payload = await readJson(req);
+  } catch (error) {
+    sendJson(res, 400, { ok: false, error: 'bad-body', message: messageOf(error) });
+    return;
+  }
+
+  if (typeof payload.enabled !== 'boolean') {
+    sendJson(res, 400, {
+      ok: false,
+      error: 'bad-flag',
+      message: '需要 enabled: true | false',
+    });
+    return;
+  }
+
+  const registry = ctx.get('skills');
+  if (!registry) {
+    sendJson(res, 503, { ok: false, error: 'skills-service-unavailable' });
+    return;
+  }
+
+  const name = text(payload.name);
+  const directory = safeDirectoryName(payload.dir);
+  if (!directory) {
+    sendJson(res, 400, {
+      ok: false,
+      error: 'bad-directory',
+      message: '需要技能目录名（不含路径分隔符）',
+    });
+    return;
+  }
+  if (!name) {
+    sendJson(res, 400, { ok: false, error: 'missing-name', message: '需要技能名（注册表里的 name）' });
+    return;
+  }
+
+  const skill = (await registry.get(name, {})) || (await diskSkill(name));
+  if (!skill) {
+    sendJson(res, 404, { ok: false, error: 'not-found', name });
+    return;
+  }
+
+  if (String(skill.source || '') === 'bundled') {
+    sendJson(res, 403, {
+      ok: false,
+      error: 'bundled-not-togglable',
+      message: '内置技能随 harness 发布，不能停用',
+    });
+    return;
+  }
+
+  const onDisk = basename(dirOf(skill.path));
+  if (onDisk && onDisk !== directory) {
+    sendJson(res, 409, {
+      ok: false,
+      error: 'directory-mismatch',
+      message: `目录不匹配：注册表指向 ${onDisk}`,
+    });
+    return;
+  }
+
+  const root = skillsRoots(skill).find((candidate) => contains(candidate, directory));
+  if (!root) {
+    sendJson(res, 403, {
+      ok: false,
+      error: 'outside-skill-root',
+      message: '拒绝越界的技能路径',
+      roots: skillsRoots(skill),
+    });
+    return;
+  }
+
+  const dir = join(root, directory);
+  if (!existsSync(dir)) {
+    sendJson(res, 404, { ok: false, error: 'missing-directory', dir });
+    return;
+  }
+
+  const activePath = join(dir, ACTIVE_FILE);
+  const parkedPath = join(dir, DISABLED_FILE);
+  const hasActive = existsSync(activePath);
+  const hasParked = existsSync(parkedPath);
+
+  try {
+    if (payload.enabled) {
+      if (hasParked && !hasActive) renameSync(parkedPath, activePath);
+      else if (hasParked && hasActive) rmSync(parkedPath, { force: true });
+    } else if (hasActive) {
+      if (hasParked) rmSync(parkedPath, { force: true });
+      renameSync(activePath, parkedPath);
+    }
+  } catch (error) {
+    sendJson(res, 500, {
+      ok: false,
+      error: 'toggle-failed',
+      message: messageOf(error),
+      dir,
+    });
+    return;
+  }
+
+  const enabledNow = existsSync(activePath);
+  sendJson(res, 200, {
+    ok: true,
+    name,
+    dir: directory,
+    path: dir,
+    enabled: enabledNow,
+    file: enabledNow ? ACTIVE_FILE : DISABLED_FILE,
+    // The registry is published at startup and on demand; a fresh value here
+    // lets the panel tell the user when the change lands in new sessions.
+    note: enabledNow ? 'enabled' : 'disabled',
   });
 }
 
@@ -1214,6 +1355,18 @@ function toSkill(summary, slug, marketMap) {
     summary.source === 'bundled' ? { found: false } : marketMap.get(slug) || { found: false };
   const localName = text(summary.description);
   const resourceBase = summary.resourceBase;
+  const dirPath =
+    resourceBase && resourceBase.kind === 'directory'
+      ? String(resourceBase.path || '')
+      : dirOf(summary.path);
+
+  // Bundled skills ship inside the harness and cannot be parked; anything under
+  // the skills root can, even if the registry has already dropped it.
+  const bundled = String(summary.source || '') === 'bundled';
+  const togglable =
+    !bundled && !!dirPath && contains(SKILLS_ROOT, basename(dirPath) || '');
+  const active = togglable ? existsSync(join(dirPath, ACTIVE_FILE)) : true;
+  const parked = togglable ? existsSync(join(dirPath, DISABLED_FILE)) : false;
 
   return {
     name: String(summary.name || ''),
@@ -1226,10 +1379,11 @@ function toSkill(summary, slug, marketMap) {
     source: String(summary.source || 'unknown'),
     provider: String(summary.provider || ''),
     path: String(summary.path || ''),
-    dir:
-      resourceBase && resourceBase.kind === 'directory'
-        ? String(resourceBase.path || '')
-        : dirOf(summary.path),
+    dir: dirPath,
+    // One switch per skill: whether new sessions will load it, and whether this
+    // panel is allowed to change that.
+    enabled: togglable ? active : true,
+    togglable: togglable && (active || parked),
     invocation: {
       modelInvocable: !!(summary.invocation && summary.invocation.modelInvocable),
       userInvocable: !!(summary.invocation && summary.invocation.userInvocable),
@@ -1435,7 +1589,10 @@ function normalizeSlug(raw) {
 function dirOf(relative) {
   if (!relative) return '';
   const value = String(relative).replace(/[\\/]+$/, '');
-  if (/\.md$/i.test(value)) {
+  // A parked skill's manifest is `SKILL.md.disabled`, which does not end in
+  // `.md`; without this the "directory" would come back as the file itself.
+  const file = basename(value);
+  if (/^skill\.md(\.disabled)?$/i.test(file) || /\.md$/i.test(value)) {
     const cut = value.search(/[\\/][^\\/]+$/);
     return cut >= 0 ? value.slice(0, cut) : '';
   }
@@ -1760,6 +1917,12 @@ function friendlyImportError(error) {
 
 const SKILLS_ROOT = join(homedir(), '.dsh', 'skills');
 
+/* Enabling/disabling a skill without uninstalling it: providers only register a
+ * directory when it carries `SKILL.md`, so parking that one file hides the skill
+ * from every catalog while leaving the tree (and the user's notes) intact. */
+const ACTIVE_FILE = 'SKILL.md';
+const DISABLED_FILE = 'SKILL.md.disabled';
+
 /** The text of a file's leading `---` frontmatter block, or ''. */
 function frontmatterText(content) {
   // Windows editors happily prepend a BOM; without this the leading `---` never
@@ -1830,18 +1993,27 @@ async function scanDisk() {
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
     const dir = join(SKILLS_ROOT, entry.name);
+    // A parked skill has no SKILL.md, only SKILL.md.disabled: it must still be
+    // listed, otherwise switching one off would remove it from the panel and
+    // leave no way to switch it back on.
+    let file = ACTIVE_FILE;
     let content;
     try {
-      content = await readFile(join(dir, 'SKILL.md'), 'utf8');
+      content = await readFile(join(dir, ACTIVE_FILE), 'utf8');
     } catch {
-      continue;
+      try {
+        content = await readFile(join(dir, DISABLED_FILE), 'utf8');
+        file = DISABLED_FILE;
+      } catch {
+        continue;
+      }
     }
     const block = frontmatterText(content);
     found.push({
       name: frontmatterValue(block, 'name') || entry.name,
       description: frontmatterValue(block, 'description') || frontmatterValue(block, 'summary'),
       whenToUse: frontmatterValue(block, 'whenToUse') || frontmatterValue(block, 'when_to_use'),
-      path: join(dir, 'SKILL.md'),
+      path: join(dir, file),
       source: 'local-disk',
       provider: 'local-disk',
       invocation: { modelInvocable: true, userInvocable: true },
