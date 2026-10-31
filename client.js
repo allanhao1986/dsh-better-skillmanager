@@ -225,6 +225,50 @@ window.__ModuleLoader__.load({
   justify-content: center;
   padding: 8px 10px;
 }
+/* Enable / disable switch: parks SKILL.md instead of deleting the skill. */
+.dsk-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  padding: 4px 10px 4px 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.dsk-switch:hover { border-color: rgba(127, 127, 127, 0.55); }
+.dsk-switch:disabled { opacity: 0.55; cursor: default; }
+.dsk-switch-track {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.4);
+  transition: background 0.16s ease;
+}
+.dsk-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.16s ease;
+}
+.dsk-switch[data-on='true'] .dsk-switch-track { background: #1f9254; }
+.dsk-switch[data-on='true'] .dsk-switch-knob { transform: translateX(14px); }
+.dsk-switch-label { font-size: 12.5px; line-height: 1; }
+.dsk-tag-off {
+  background: rgba(127, 127, 127, 0.18);
+  color: var(--dsw-alias-label-secondary, #6b7280);
+}
+.dsk-item[data-off='true'] .dsk-item-title { color: var(--dsw-alias-label-secondary, #6b7280); }
+
 .dsk-btn {
   appearance: none;
   border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.12));
@@ -2592,6 +2636,7 @@ window.__ModuleLoader__.load({
         const [copied, setCopied] = React.useState('');
         const [removing, setRemoving] = React.useState(false);
         const [removeError, setRemoveError] = React.useState('');
+        const [toggling, setToggling] = React.useState(false);
 
         React.useEffect(() => {
           setRemoving(false);
@@ -2692,6 +2737,22 @@ window.__ModuleLoader__.load({
             }
           } catch (err) {
             /* clipboard is best effort */
+          }
+        }
+
+        /* ---- enable / disable ---- */
+        async function toggleSkill(skill, next) {
+          const dir = dirNameOf(skill);
+          if (!dir) return;
+          setToggling(true);
+          setRemoveError('');
+          try {
+            await postJson(ROUTE + '/toggle', { name: skill.name, dir: dir, enabled: next });
+            reload();
+          } catch (err) {
+            setRemoveError(err && err.message ? err.message : String(err));
+          } finally {
+            setToggling(false);
           }
         }
 
@@ -2843,6 +2904,7 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 className: 'dsk-item',
                 'data-active': skill.name === selected ? 'true' : 'false',
+                'data-off': skill.enabled === false ? 'true' : 'false',
                 onClick: () => setSelected(skill.name),
               },
               h(SkillMark, { skill: skill, size: 30 }),
@@ -2853,6 +2915,11 @@ window.__ModuleLoader__.load({
                   'span',
                   { className: 'dsk-item-titlerow' },
                   h('span', { className: 'dsk-item-title' }, titleOf(skill)),
+                  // A parked skill stays listed so it can be switched back on;
+                  // the chip is what tells the two states apart in the list.
+                  skill.enabled === false
+                    ? h('span', { className: 'dsk-tag dsk-tag-off' }, t('Off', '已停用'))
+                    : null,
                   // List rows keep the plain native tooltip: hover cards here
                   // fought with the scrolling list, so they live in the detail
                   // pane only.
@@ -2981,6 +3048,8 @@ window.__ModuleLoader__.load({
 
           const dir = dirNameOf(current);
           const removable = canUninstall(current);
+          const canToggle = current.togglable === true;
+          const isOn = current.enabled !== false;
 
           const actionButton = removable
             ? h(
@@ -2995,6 +3064,40 @@ window.__ModuleLoader__.load({
                   style: { flex: '0 0 auto', padding: '6px 12px', fontSize: 12.5 },
                 },
                 removing ? t('Uninstalling…', '卸载中…') : t('Uninstall', '卸载'),
+              )
+            : null;
+
+          // The switch parks or restores SKILL.md, so a skill can be taken out of
+          // new sessions without losing the folder or reinstalling later.
+          const toggleSwitch = canToggle
+            ? h(
+                'button',
+                {
+                  className: 'dsk-switch',
+                  type: 'button',
+                  role: 'switch',
+                  'aria-checked': isOn ? 'true' : 'false',
+                  'data-on': isOn ? 'true' : 'false',
+                  disabled: toggling,
+                  title: isOn
+                    ? t('On: new sessions load this skill', '已启用：新会话会加载这个技能')
+                    : t('Off: new sessions skip this skill', '已停用：新会话不会加载这个技能'),
+                  onClick: () => toggleSkill(current, !isOn),
+                },
+                h(
+                  'span',
+                  { className: 'dsk-switch-track' },
+                  h('span', { className: 'dsk-switch-knob' }),
+                ),
+                h(
+                  'span',
+                  { className: 'dsk-switch-label' },
+                  toggling
+                    ? t('Saving…', '保存中…')
+                    : isOn
+                      ? t('On', '已启用')
+                      : t('Off', '已停用'),
+                ),
               )
             : null;
 
@@ -3027,6 +3130,7 @@ window.__ModuleLoader__.load({
                     : current.name,
                 ),
               ),
+              toggleSwitch,
               actionButton,
             ),
             // Failures stay inline (no popup): the message sits under the
